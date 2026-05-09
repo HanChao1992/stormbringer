@@ -351,16 +351,17 @@ canvas {
 }
 
 .pause-panel {
-  width: min(760px, 100%);
-  max-height: min(590px, calc(100% - 16px));
+  width: min(560px, calc(100% - 24px));
+  height: min(700px, calc(100% - 24px));
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
-  gap: 16px;
+  grid-template-rows: 56px 38px 38px minmax(0, 1fr);
+  gap: 12px;
   padding: 22px;
   border: 1px solid rgba(237, 247, 245, 0.18);
   border-radius: 8px;
   background: rgba(9, 15, 18, 0.92);
   box-shadow: 0 22px 68px rgba(0, 0, 0, 0.42);
+  overflow: hidden;
 }
 
 .pause-head {
@@ -368,6 +369,7 @@ canvas {
   justify-content: space-between;
   gap: 16px;
   align-items: start;
+  min-height: 0;
 }
 
 .pause-head h2 {
@@ -395,20 +397,48 @@ canvas {
   outline: 0;
 }
 
+.pause-menu-tabs,
 .encyclopedia-tabs {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 8px;
+  height: 38px;
+  min-height: 38px;
 }
 
+.pause-menu-tabs {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.encyclopedia-tabs {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.encyclopedia-tabs.submenu-hidden {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.pause-menu-tabs button,
 .encyclopedia-tabs button {
-  min-height: 38px;
+  height: 38px;
+  min-height: 0;
   border: 1px solid rgba(237, 247, 245, 0.16);
   border-radius: 6px;
   color: #91a4a0;
   background: rgba(237, 247, 245, 0.055);
   font-weight: 850;
   cursor: pointer;
+}
+
+.pause-menu-tabs button {
+  color: #b8c8c5;
+  background: rgba(7, 16, 20, 0.34);
+}
+
+.pause-menu-tabs button.active {
+  border-color: rgba(255, 209, 102, 0.72);
+  color: #edf7f5;
+  background: rgba(255, 209, 102, 0.14);
 }
 
 .encyclopedia-tabs button.active {
@@ -421,6 +451,7 @@ canvas {
   min-height: 0;
   overflow: auto;
   display: grid;
+  align-content: start;
   gap: 10px;
   padding-right: 4px;
 }
@@ -752,8 +783,8 @@ h1 {
   background: #8a7dff;
 }
 
-.trident-icon {
-  background: #6df6d5;
+.laser-icon {
+  background: #2fd46f;
 }
 
 .machinegun-icon {
@@ -784,22 +815,14 @@ h1 {
   box-shadow: 0 0 12px rgba(138, 125, 255, 0.4);
 }
 
-#tridentMeter {
-  background: #6df6d5;
-  box-shadow: 0 0 12px rgba(109, 246, 213, 0.4);
-}
-
-.power-row.eternal .trident-icon {
-  box-shadow: 0 0 0 2px rgba(237, 247, 245, 0.72), 0 0 18px rgba(109, 246, 213, 0.72);
+#laserMeter {
+  background: #2fd46f;
+  box-shadow: 0 0 12px rgba(47, 212, 111, 0.42);
 }
 
 .power-row.eternal .power-meter {
   border-color: rgba(109, 246, 213, 0.58);
   background: linear-gradient(90deg, rgba(109, 246, 213, 0.14), rgba(237, 247, 245, 0.09));
-}
-
-.power-row.eternal #tridentMeter {
-  background: repeating-linear-gradient(90deg, #6df6d5 0 8px, #edf7f5 8px 11px);
 }
 
 #machineGunMeter {
@@ -928,6 +951,7 @@ h1 {
     right: 8px;
   }
 
+  .pause-menu-tabs,
   .encyclopedia-tabs {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }

@@ -7,6 +7,7 @@ const startButton = document.getElementById("startButton");
 const restartButton = document.getElementById("restartButton");
 const pauseMenu = document.getElementById("pauseMenu");
 const resumeButton = document.getElementById("resumeButton");
+const pauseMenuTabs = document.getElementById("pauseMenuTabs");
 const encyclopediaTabs = document.getElementById("encyclopediaTabs");
 const encyclopediaBody = document.getElementById("encyclopediaBody");
 const healthText = document.getElementById("health");
@@ -20,8 +21,7 @@ const titleLastScoreText = document.getElementById("titleLastScore");
 const waveText = document.getElementById("wave");
 const chargeText = document.getElementById("charge");
 const shotgunMeter = document.getElementById("shotgunMeter");
-const tridentMeter = document.getElementById("tridentMeter");
-const tridentPowerRow = document.getElementById("tridentPowerRow");
+const laserMeter = document.getElementById("laserMeter");
 const missileMeter = document.getElementById("missileMeter");
 const machineGunMeter = document.getElementById("machineGunMeter");
 const debugPanel = document.getElementById("debugPanel");
@@ -58,6 +58,10 @@ let muzzleBlasts = [];
 let nukeEffects = [];
 let missileSplashEffects = [];
 let civilianShips = [];
+let playerLaserBeam = null;
+let supportShips = [];
+let supportTrails = [];
+let supportPathLanes = [];
 let ultimateCue = null;
 let circleUltimate = null;
 let playerDeathSequence = null;
@@ -68,19 +72,26 @@ let inventoryUnlockFlash = 0;
 let lastInventorySlotCount = 1;
 let bestStreakLevel = 0;
 let runStats = null;
+let pauseMenuSection = "encyclopedia";
+let encyclopediaTab = "enemies";
 const { powerupInfo, killLabels, encyclopedia } = window.StormbringerData;
 const { LAST_RUN_KEY, BEST_RUN_KEY, LEGACY_LAST_RUN_KEY, LEGACY_BEST_RUN_KEY, emptyKills, loadStoredSummary, storeSummary, formatSigned } = window.StormbringerRecords;
 let lastRunSummary = loadStoredSummary(LAST_RUN_KEY) || loadStoredSummary(LEGACY_LAST_RUN_KEY);
 let bestRunSummary = loadStoredSummary(BEST_RUN_KEY) || loadStoredSummary(LEGACY_BEST_RUN_KEY);
 let nextBossWave = 10;
 let wave = 1;
+let announcedWave = 1;
 let elapsed = 0;
 let spawnTimer;
 let formationTimer;
 let minefieldTimer;
+let breatherTimer;
+let lootBreatherCooldown;
+let pendingThreat = null;
 let shotTimer;
 let missileTimer;
 let machineGunTimer;
+let laserTickTimer;
 let mothershipSpawnCooldown = 0;
 let shake = 0;
 let hitStop = 0;
@@ -111,9 +122,8 @@ const PLANET_PALETTES = [
 const UFO_PRE_FIRE_HOLD = 0.62;
 const UFO_POST_FIRE_HOLD = 0.72;
 const SPLITTER_MAX_ACTIVE = 4;
-const SPLITTER_SHARDS_PER_DEATH = 4;
-const SPLITTER_SHARD_MAX_ACTIVE = 12;
-const S_RANK_MISSILE_AOE = 68;
+const SPLITTER_CHILDREN_PER_DEATH = 3;
+const S_RANK_MISSILE_AOE = 96;
 const MOTHERSHIP_SPAWN_SLOWDOWN = 1.14;
 const FIGHTER_INITIAL_FIRE_DELAY = [0.55, 1.25];
 const FIGHTER_FIRE_DELAY = [1.32, 2.12];
@@ -121,7 +131,7 @@ const FRENZIED_FIGHTER_FIRE_DELAY = [0.82, 1.22];
 const FORMATION_SPAWN_DELAY = [3.4, 5.1];
 const MINEFIELD_SPAWN_DELAY = [5.2, 8.0];
 const MINE_MAX_ACTIVE = 18;
-const MINE_BLAST_RADIUS = 88;
+const MINE_BLAST_RADIUS = 116;
 const MINE_BLAST_DAMAGE = 3.5;
 const PLAYER_MOVE_SPEED = 500;
 const ENEMY_FORWARD_DRIFT = {
@@ -136,6 +146,8 @@ const DEFAULT_AUDIO_SETTINGS = {
   sfx: 0.55,
   music: 0.42,
 };
+const SUPPORT_TRAIL_COLORS = ["#ff5b74", "#ffd166", "#7cf7a8", "#6df6d5", "#8a7dff"];
+const SUPPORT_PATH_COLORS = ["#ff8aa0", "#ffe08a", "#a8ffd0", "#9bfff0", "#aaa2ff"];
 const STREAK_LAYERS = [
   { grade: "D", color: "#6df6d5" },
   { grade: "C", color: "#7cf7a8" },
@@ -145,16 +157,23 @@ const STREAK_LAYERS = [
 ];
 const STREAK_CHARGE_PER_LAYER = 1.7;
 const STREAK_DECAY_BY_LEVEL = [0, 0.16, 0.22, 0.28, 0.34, 0.42];
+const WAVE_THEMES = [
+  { key: "formation", label: "Fighter Formation", color: "#ffd166" },
+  { key: "ufo", label: "UFO Crossfire", color: "#8a7dff" },
+  { key: "mine", label: "Mine Corridor", color: "#ff5b74" },
+  { key: "jet", label: "Jet Ambush", color: "#edf7f5" },
+  { key: "cargo", label: "Cargo Rush", color: "#ffd166" },
+  { key: "mixed", label: "Assault Mix", color: "#6df6d5" },
+];
 const debugKeyEntries = [
   { mark: "`", title: "Debug Overlay", text: "Show or hide live run stats.", tip: "Use this when tuning waves, drops, bullets, and boss state.", color: "#6df6d5" },
   { mark: "B", title: "Start Boss", text: "Immediately brings in the first boss if no boss is active.", tip: "Bosses normally arrive through the wave schedule.", color: "#ff5b74" },
-  { mark: "C", title: "Seal of Judgement", text: "Arms the real ultimate for testing.", tip: "Hold left mouse to draw; release breaks judgement.", color: "#edf7f5" },
   { mark: "M", title: "Planet Pack", text: "Summons a named planet with nearby fighters for aura testing.", tip: "Enemies and the player fire faster inside the gold frenzy aura.", color: "#ffd166" },
   { mark: "S", title: "S Rank", text: "Instantly fills the streak system to S rank.", tip: "Useful for testing weapon overdrives and high-rank energy flow.", color: "#ff5b74" },
   { mark: "1", title: "Shotgun Drop", text: "Spawns the shotgun main weapon powerup near the player.", tip: "Main weapon slot.", color: "#ffd166" },
-  { mark: "2", title: "Trident Drop", text: "Spawns the trident main weapon powerup near the player.", tip: "At S rank, trident pickup triggers its ultimate instead.", color: "#6df6d5" },
+  { mark: "2", title: "Laser Drop", text: "Spawns the laser main weapon powerup near the player.", tip: "Main weapon slot.", color: "#2fd46f" },
   { mark: "3", title: "Missile Drop", text: "Spawns the missile sub weapon powerup near the player.", tip: "Sub weapon slot.", color: "#8a7dff" },
-  { mark: "4", title: "Machine Gun Drop", text: "Spawns the machine gun sub weapon powerup near the player.", tip: "Short range suppression weapon.", color: "#7cf7a8" },
+  { mark: "4", title: "Machine Gun Drop", text: "Spawns the machine gun sub weapon powerup near the player.", tip: "Short range bullet-clearing weapon.", color: "#ff5b74" },
   { mark: "E", title: "Fill Energy", text: "Fills the ultimate energy units.", tip: "Triggers remain tied to normal energy logic.", color: "#2667ff" },
   { mark: "H", title: "Restore Hull", text: "Restores player hull to full.", tip: "Good for boss and wave endurance tests.", color: "#7cf7a8" },
 ];
@@ -170,10 +189,18 @@ const currentStreakProgress = () => {
 };
 const currentStreakDecayRate = () => STREAK_DECAY_BY_LEVEL[currentStreakLevel()] || 0;
 const inventorySlotCount = () => (currentStreakLevel() >= 5 ? 4 : currentStreakLevel() >= 4 ? 3 : currentStreakLevel() >= 3 ? 2 : 1);
+const currentWaveTheme = () => WAVE_THEMES[(wave - 1) % WAVE_THEMES.length];
 const hasSStreak = () => currentStreakLevel() >= STREAK_LAYERS.length;
 const hasEnergyFloor = () => currentStreakLevel() >= 4;
 const minimumEnergy = () => (hasSStreak() ? 2 : hasEnergyFloor() ? 1 : 0);
+
+function splitterStats(tier = "L") {
+  if (tier === "S") return { tier: "S", next: null, radius: 12, hp: 1.6, speed: 130, cooldown: [1.45, 2.05], reward: 95, color: "#ff5b74" };
+  if (tier === "M") return { tier: "M", next: "S", radius: 20, hp: 3.2, speed: 104, cooldown: [1.25, 1.8], reward: 165, color: "#c95cff" };
+  return { tier: "L", next: "M", radius: 32, hp: 8.2, speed: 72, cooldown: [1.55, 2.25], reward: 360, color: "#9b56d9" };
+}
 const effectiveMainWeapon = () => (player ? player.mainWeapon : "normal");
+const isLaserActive = () => player && (effectiveMainWeapon() === "laser" || player.laserUltimateTimer > 0);
 const hasSOverdrive = () => hasSStreak();
 const streakBenefitLevel = () => Math.max(0, currentStreakLevel() - 1);
 const streakDamageMultiplier = () => 1 + streakBenefitLevel() * 0.04;
@@ -193,7 +220,8 @@ const isDroneOnPlayerScreen = (drone) => Boolean(
     drone.y - drone.r < HEIGHT
 );
 
-const isDroneVulnerable = (drone) => Boolean(drone && (drone.enteredScreen || isDroneOnPlayerScreen(drone)));
+const isMineArmed = (drone) => Boolean(drone && drone.type === "mine" && drone.mineState === "armed");
+const isDroneVulnerable = (drone) => Boolean(drone && (drone.type !== "mine" || isMineArmed(drone)) && (drone.enteredScreen || isDroneOnPlayerScreen(drone)));
 
 const planetEntryProgress = (drone) => {
   if (!drone || drone.type !== "mothership") return 1;
@@ -308,7 +336,7 @@ function refreshStreakDecay() {
 }
 
 function registerStreakHit(kind = "normal", x, y) {
-  const amount = kind === "shotgun" ? 0.026 : kind === "missile" ? 0.02 : kind === "machinegun" || kind === "lockdown" ? 0.006 : kind === "ultimate" ? 0.03 : 0.013;
+  const amount = kind === "shotgun" ? 0.026 : kind === "missile" ? 0.02 : kind === "machinegun" || kind === "lockdown" || kind === "sweeper" ? 0.006 : kind === "ultimate" ? 0.03 : 0.013;
   addStreakCharge(amount, x, y, false);
 }
 
@@ -704,9 +732,10 @@ const audio = {
     this.tone({ type: "triangle", frequency: 260, endFrequency: 720, duration: 0.18, volume: 0.16 });
   },
   laser() {
-    if (!this.throttle("laser", 0.12)) return;
-    this.tone({ type: "sawtooth", frequency: 760, endFrequency: 340, duration: 0.16, volume: 0.12 });
-    this.tone({ type: "square", frequency: 1140, endFrequency: 680, duration: 0.08, volume: 0.06 });
+    if (!this.throttle("laser", 0.32)) return;
+    this.noise({ duration: 0.34, volume: 0.026, filterFrequency: 1800 });
+    this.tone({ type: "sawtooth", frequency: 132, endFrequency: 126, duration: 0.34, volume: 0.075 });
+    this.tone({ type: "triangle", frequency: 390, endFrequency: 420, duration: 0.32, volume: 0.035, when: 0.01 });
   },
   mothershipAlert() {
     if (!this.throttle("mothership-alert", 2.5)) return;
@@ -741,8 +770,8 @@ const audio = {
     } else if (kind === "missile") {
       this.noise({ duration: 0.12, volume: 0.19, filterFrequency: 780 });
       this.tone({ type: "triangle", frequency: 125 * pitch, endFrequency: 48 * pitch, duration: 0.14, volume: 0.18 });
-    } else if (kind === "machinegun" || kind === "lockdown") {
-      this.tone({ type: "sine", frequency: 920 * pitch, endFrequency: 1180 * pitch, duration: 0.045, volume: kind === "lockdown" ? 0.07 : 0.055 });
+    } else if (kind === "machinegun" || kind === "lockdown" || kind === "sweeper") {
+      this.tone({ type: "sine", frequency: 920 * pitch, endFrequency: 1180 * pitch, duration: 0.045, volume: kind === "lockdown" || kind === "sweeper" ? 0.07 : 0.055 });
       this.tone({ type: "triangle", frequency: 1380 * pitch, endFrequency: 840 * pitch, duration: 0.04, volume: 0.04, when: 0.012 });
     } else if (kind === "ultimate") {
       this.tone({ type: "triangle", frequency: 450 * pitch, endFrequency: 250 * pitch, duration: 0.075, volume: 0.16 });
@@ -913,6 +942,9 @@ function resetGame() {
     inventory: [],
     rapidMissileTimer: 0,
     lockdownTimer: 0,
+    laserUltimateTimer: 0,
+    laserUltimateMax: 0,
+    laserWarmup: 0,
     frenzyTimer: 0,
   };
   pointer.x = player.x;
@@ -932,6 +964,10 @@ function resetGame() {
   nukeEffects = [];
   missileSplashEffects = [];
   civilianShips = [];
+  playerLaserBeam = null;
+  supportShips = [];
+  supportTrails = [];
+  supportPathLanes = [];
   ultimateCue = null;
   circleUltimate = null;
   playerDeathSequence = null;
@@ -948,13 +984,18 @@ function resetGame() {
   };
   nextBossWave = 10;
   wave = 1;
+  announcedWave = 1;
   elapsed = 0;
   spawnTimer = 1.05;
   formationTimer = 2.8;
   minefieldTimer = 5.0;
+  breatherTimer = 1.2;
+  lootBreatherCooldown = 0;
+  pendingThreat = null;
   shotTimer = 0;
   missileTimer = 0.85;
   machineGunTimer = 0;
+  laserTickTimer = 0;
   mothershipSpawnCooldown = 6;
   shake = 0;
   hitStop = 0;
@@ -1034,8 +1075,7 @@ function updateHud() {
     }
   }
   if (shotgunMeter) shotgunMeter.style.width = `${player.mainWeapon === "shotgun" ? clamp(player.mainTimer / 8, 0, 1) * 100 : 0}%`;
-  if (tridentMeter) tridentMeter.style.width = `${player.mainWeapon === "trident" ? clamp(player.mainTimer / 8, 0, 1) * 100 : 0}%`;
-  if (tridentPowerRow) tridentPowerRow.classList.toggle("eternal", false);
+  if (laserMeter) laserMeter.style.width = `${player.mainWeapon === "laser" ? clamp(player.mainTimer / 8, 0, 1) * 100 : 0}%`;
   if (missileMeter) missileMeter.style.width = `${player.subWeapon === "missiles" ? clamp(player.subTimer / 10, 0, 1) * 100 : 0}%`;
   if (machineGunMeter) machineGunMeter.style.width = `${player.subWeapon === "machinegun" ? clamp(player.subTimer / 10, 0, 1) * 100 : 0}%`;
   updateDebugPanel();
@@ -1092,13 +1132,22 @@ function updateDebugPanel() {
     </div>`;
 }
 
-function renderEncyclopedia(tab = "enemies") {
-  if (!encyclopediaBody || !encyclopediaTabs) return;
-  if (tab === "settings") {
-    encyclopediaTabs.querySelectorAll("button").forEach((button) => {
-      button.classList.toggle("active", button.dataset.tab === tab);
-    });
-    encyclopediaBody.innerHTML = `
+function renderEntryList(entries) {
+  encyclopediaBody.innerHTML = entries
+    .map((entry) => `
+      <article class="encyclopedia-entry">
+        <div class="entry-mark ${entry.shape}" style="background:${entry.color}">${entry.mark}</div>
+        <div class="entry-copy">
+          <h3>${entry.title}</h3>
+          <p>${entry.text}</p>
+          <small>${entry.tip}</small>
+        </div>
+      </article>`)
+    .join("");
+}
+
+function renderSettingsMenu() {
+  encyclopediaBody.innerHTML = `
       <section class="settings-menu" aria-label="Settings">
         <article class="settings-card">
           <div>
@@ -1117,24 +1166,29 @@ function renderEncyclopedia(tab = "enemies") {
           </label>
         </article>
       </section>`;
-    updateVolumeUi();
+  updateVolumeUi();
+}
+
+function renderPauseMenu(section = pauseMenuSection, tab = encyclopediaTab) {
+  if (!encyclopediaBody || !encyclopediaTabs || !pauseMenuTabs) return;
+  pauseMenuSection = section;
+  pauseMenuTabs.querySelectorAll("button").forEach((button) => {
+    button.classList.toggle("active", button.dataset.menu === section);
+  });
+  encyclopediaTabs.classList.toggle("submenu-hidden", section !== "encyclopedia");
+  if (section === "settings") {
+    renderSettingsMenu();
     return;
   }
-  const entries = tab === "debug" ? debugKeyEntries : encyclopedia[tab] || encyclopedia.enemies;
+  if (section === "help") {
+    renderEntryList(encyclopedia.help || []);
+    return;
+  }
+  encyclopediaTab = tab;
   encyclopediaTabs.querySelectorAll("button").forEach((button) => {
     button.classList.toggle("active", button.dataset.tab === tab);
   });
-  encyclopediaBody.innerHTML = entries
-    .map((entry) => `
-      <article class="encyclopedia-entry">
-        <div class="entry-mark ${entry.shape}" style="background:${entry.color}">${entry.mark}</div>
-        <div class="entry-copy">
-          <h3>${entry.title}</h3>
-          <p>${entry.text}</p>
-          <small>${entry.tip}</small>
-        </div>
-      </article>`)
-    .join("");
+  renderEntryList(tab === "debug" ? debugKeyEntries : encyclopedia[tab] || encyclopedia.enemies);
 }
 
 function openPauseMenu() {
@@ -1145,7 +1199,7 @@ function openPauseMenu() {
   pointer.rightDown = false;
   audio.stopMusic();
   pauseMenu.classList.remove("hidden");
-  renderEncyclopedia();
+  renderPauseMenu();
 }
 
 function closePauseMenu() {
@@ -1195,6 +1249,24 @@ function addParticle(x, y, options = {}) {
     spin: options.spin ?? rand(-8, 8),
     angle,
     drag: options.drag ?? 0.98,
+    gravity: options.gravity ?? 0,
+  });
+}
+
+function ejectShell(x, y, options = {}) {
+  const side = options.side ?? (Math.random() < 0.5 ? -1 : 1);
+  addParticle(x, y, {
+    angle: options.angle ?? rand(0.25, 0.72) * Math.PI * side,
+    color: options.color ?? "#c58b42",
+    shape: options.shape ?? "shell",
+    minSpeed: options.minSpeed ?? 60,
+    speed: options.speed ?? 150,
+    life: options.life ?? 0.72,
+    minLife: options.minLife ?? 0.42,
+    size: options.size ?? 5,
+    spin: options.spin ?? rand(-18, 18),
+    drag: options.drag ?? 0.988,
+    gravity: options.gravity ?? 420,
   });
 }
 
@@ -1276,6 +1348,7 @@ function applyMissileSplash(missile, primaryTarget = null) {
 function applyMineBlast(mine) {
   if (!mine) return;
   const radius = MINE_BLAST_RADIUS;
+  let enemyHits = 0;
   missileSplashEffects.push({
     x: mine.x,
     y: mine.y,
@@ -1299,6 +1372,7 @@ function applyMineBlast(mine) {
       }
       if (!isDroneVulnerable(drone)) return;
       const result = damageDrone(drone, MINE_BLAST_DAMAGE, "mine", projectileImpactAngle(mine, drone));
+      enemyHits += 1;
       drone.flash = Math.max(drone.flash, 0.16);
       addParticles(drone.x, drone.y, result.shieldHit ? SHIELD_COLOR : result.armorHit ? "#ffd166" : "#ff5b74", 10, 170);
       audio.enemyHit("missile", drone.hp / drone.maxHp, impactLayer(result));
@@ -1310,8 +1384,13 @@ function applyMineBlast(mine) {
     bossTargets().forEach((target) => {
       if (dist2(mine, target) <= radius * radius) {
         damageBossTarget(target, MINE_BLAST_DAMAGE * 0.55);
+        enemyHits += 1;
       }
     });
+  }
+  if (enemyHits > 0) {
+    addFloatingText(mine.x, mine.y - 42, enemyHits >= 3 ? "CHAIN BLAST" : "MINE HIT", "#ffd166");
+    addRingBurst(mine.x, mine.y, "#ffd166", 18 + enemyHits * 3, radius * 0.22, 260, 3);
   }
 }
 
@@ -1438,16 +1517,17 @@ function addDeathAnimation(drone) {
   }
 
   if (drone.type === "splitter") {
-    addRingBurst(drone.x, drone.y, "#ff5b74", 24, 8, 330, 3.2);
-    addRingBurst(drone.x, drone.y, "#8a7dff", 12, 2, 230, 2.5);
-    for (let i = 0; i < 26; i += 1) {
+    const stats = splitterStats(drone.splitterTier || "L");
+    addRingBurst(drone.x, drone.y, "#ff5b74", stats.tier === "L" ? 32 : 22, drone.r * 0.38, 330, 3.2);
+    addRingBurst(drone.x, drone.y, stats.color, stats.tier === "S" ? 8 : 14, 2, 230, 2.5);
+    for (let i = 0; i < (stats.tier === "L" ? 36 : stats.tier === "M" ? 24 : 14); i += 1) {
       addParticle(drone.x, drone.y, {
-        color: i % 3 === 0 ? "#8a7dff" : i % 3 === 1 ? "#ff5b74" : "#edf7f5",
+        color: i % 3 === 0 ? stats.color : i % 3 === 1 ? "#ff5b74" : "#edf7f5",
         shape: i % 2 ? "shard" : "slash",
-        speed: 360,
+        speed: stats.tier === "L" ? 430 : 340,
         minSpeed: 90,
         life: 0.58,
-        size: rand(4, 11),
+        size: rand(stats.tier === "S" ? 3 : 4, stats.tier === "L" ? 14 : 10),
       });
     }
     return;
@@ -1838,19 +1918,22 @@ function spawnFormationFighter(options) {
     wobble: rand(0, Math.PI * 2),
     flash: 0,
     formation: {
+      pattern: options.pattern || "line",
       laneX: options.laneX,
       offsetX: options.offsetX || 0,
       speed: options.speed || 86,
       arcAmp: options.arcAmp || 0,
       arcPhase: options.arcPhase || 0,
       sway: options.sway || 0,
+      sweep: options.sweep || 0,
+      startY: options.y,
     },
   });
 }
 
-function spawnFighterFormation() {
+function spawnFighterFormation(themeKey = currentWaveTheme().key) {
   if (activeEnemyCount("ship") > 12) return false;
-  const pattern = Math.floor(rand(0, 3));
+  const pattern = themeKey === "formation" ? Math.floor(rand(0, 4)) : Math.floor(rand(0, 3));
   const count = pattern === 1 ? 7 : 6;
   const laneX = clamp(player ? player.x : WIDTH / 2, WIDTH * 0.24, WIDTH * 0.76);
   const speed = rand(78, 98) + wave * 1.5;
@@ -1862,6 +1945,7 @@ function spawnFighterFormation() {
         y: -48 - i * 34,
         laneX,
         speed,
+        pattern: "line",
       });
     }
   } else if (pattern === 1) {
@@ -1875,9 +1959,10 @@ function spawnFighterFormation() {
         speed: speed * 0.92,
         arcAmp: 16,
         arcPhase: offset * 0.18,
+        pattern: "chevron",
       });
     }
-  } else {
+  } else if (pattern === 2) {
     for (let i = 0; i < count; i += 1) {
       const offset = i - (count - 1) / 2;
       spawnFormationFighter({
@@ -1888,22 +1973,41 @@ function spawnFighterFormation() {
         speed: speed * 0.96,
         arcAmp: 34,
         arcPhase: -Math.PI * 0.5 + i * 0.22,
+        pattern: "arc",
+      });
+    }
+  } else {
+    const side = Math.random() < 0.5 ? -1 : 1;
+    const startX = side < 0 ? WIDTH * 0.18 : WIDTH * 0.82;
+    const sweep = side * rand(86, 128);
+    for (let i = 0; i < 8; i += 1) {
+      const offset = i - 3.5;
+      spawnFormationFighter({
+        x: startX + offset * 18,
+        y: -52 - i * 26,
+        laneX: startX,
+        offsetX: offset * 18,
+        speed: speed * 1.02,
+        arcAmp: 22,
+        arcPhase: i * 0.26,
+        sweep,
+        pattern: "sweep",
       });
     }
   }
 
-  addFloatingText(WIDTH / 2, 58, "FORMATION", "#ffd166");
+  addFloatingText(WIDTH / 2, 58, pattern === 3 ? "SWEEP FORMATION" : "FORMATION", "#ffd166");
   return true;
 }
 
 function spawnMine(x, y, options = {}) {
-  const maxHp = options.hp || 3;
+  const maxHp = options.hp || 5;
   drones.push({
     x,
     y,
     vx: 0,
     targetY: y,
-    r: options.r || 12,
+    r: options.r || 9,
     type: "mine",
     hp: maxHp,
     maxHp,
@@ -1911,6 +2015,9 @@ function spawnMine(x, y, options = {}) {
     wobble: rand(0, Math.PI * 2),
     spin: rand(0, Math.PI * 2),
     spinSpeed: rand(1.1, 1.8) * (Math.random() < 0.5 ? -1 : 1),
+    mineState: "incoming",
+    armingTimer: 0,
+    armingMax: 0.58,
     flash: 0,
   });
 }
@@ -2000,6 +2107,7 @@ function spawnFighterJet() {
   const targetX = side < 0 ? rand(WIDTH * 0.18, WIDTH * 0.4) : rand(WIDTH * 0.6, WIDTH * 0.82);
   const targetY = rand(110, HEIGHT * 0.28);
   const maxHp = 5 + Math.floor(wave / 4);
+  const maxShield = 1.8 + wave * 0.08;
   drones.push({
     x: side,
     y: targetY + rand(-24, 24),
@@ -2010,6 +2118,12 @@ function spawnFighterJet() {
     type: "jet",
     hp: maxHp,
     maxHp,
+    shield: maxShield,
+    maxShield,
+    shieldDelay: 1,
+    armor: 3,
+    maxArmor: 3,
+    armorFlash: 0,
     cooldown: 0,
     lockTimer: 1.5,
     lockMax: 1.5,
@@ -2027,59 +2141,113 @@ function spawnFighterJet() {
 function spawnSplitter() {
   if (activeEnemyCount("splitter") >= SPLITTER_MAX_ACTIVE) return false;
   const side = Math.random() < 0.5 ? -30 : WIDTH + 30;
-  const maxHp = 6 + Math.floor(wave / 6);
+  const stats = splitterStats("L");
+  const maxHp = stats.hp + Math.floor(wave / 6);
   drones.push({
     x: side,
     y: rand(120, HEIGHT * 0.34),
-    vx: side < 0 ? rand(58, 82) : rand(-82, -58),
+    vx: side < 0 ? rand(58, stats.speed) : rand(-stats.speed, -58),
     targetY: rand(135, HEIGHT * 0.38),
-    r: 22,
+    r: stats.radius,
     type: "splitter",
+    splitterTier: "L",
     hp: maxHp,
     maxHp,
-    cooldown: rand(1.55, 2.25),
+    cooldown: rand(stats.cooldown[0], stats.cooldown[1]),
     wobble: rand(0, Math.PI * 2),
     flash: 0,
   });
   return true;
 }
 
-function spawnSplitterShards(drone) {
-  const existing = activeEnemyCount("splitterShard");
-  const allowed = Math.max(0, Math.min(SPLITTER_SHARDS_PER_DEATH, SPLITTER_SHARD_MAX_ACTIVE - existing));
-  if (!allowed) return;
-  for (let i = 0; i < allowed; i += 1) {
-    const angle = -Math.PI / 2 + (i - (allowed - 1) / 2) * 0.68 + rand(-0.18, 0.18);
-    const speed = rand(115, 165);
+function spawnSplitterChildren(drone) {
+  const parentStats = splitterStats(drone.splitterTier || "L");
+  if (!parentStats.next) return;
+  const childStats = splitterStats(parentStats.next);
+  for (let i = 0; i < SPLITTER_CHILDREN_PER_DEATH; i += 1) {
+    const angle = Math.PI / 2 + (i - 1) * 0.72 + rand(-0.08, 0.08);
+    const speed = childStats.speed + rand(-12, 18);
+    const maxHp = childStats.hp + (childStats.tier === "M" ? Math.floor(wave / 8) : 0);
     drones.push({
-      x: drone.x + Math.cos(angle) * 12,
-      y: drone.y + Math.sin(angle) * 12,
+      x: drone.x + Math.cos(angle) * (drone.r * 0.48),
+      y: drone.y + Math.sin(angle) * (drone.r * 0.48),
       vx: Math.cos(angle) * speed,
-      vy: Math.sin(angle) * speed + 34,
-      targetY: drone.y + rand(110, 180),
-      r: 11,
-      type: "splitterShard",
-      hp: 1,
-      maxHp: 1,
-      cooldown: 99,
-      lifetime: rand(4.1, 5.2),
+      vy: Math.sin(angle) * speed * 0.38,
+      targetY: drone.y + rand(95, 165),
+      r: childStats.radius,
+      type: "splitter",
+      splitterTier: childStats.tier,
+      hp: maxHp,
+      maxHp,
+      cooldown: rand(childStats.cooldown[0], childStats.cooldown[1]),
+      splitBirth: 0.42,
       wobble: rand(0, Math.PI * 2),
       flash: 0,
     });
+    addRingBurst(drone.x, drone.y, childStats.color, 10 + i * 2, 6 + i * 3, 230 + i * 30, 2.4);
   }
-  addFloatingText(drone.x, drone.y - 30, "SPLIT", "#ff5b74");
-  addRingBurst(drone.x, drone.y, "#ff5b74", 18, 10, 260, 3.2);
+  addFloatingText(drone.x, drone.y - drone.r - 10, `${parentStats.tier}->${childStats.tier} SPLIT`, "#ff5b74");
+  addRingBurst(drone.x, drone.y, "#ff5b74", 26, drone.r * 0.55, 340, 4);
+  addRingBurst(drone.x, drone.y, "#edf7f5", 12, 2, 210, 2.6);
 }
 
 function currentSpawnDelay() {
   return Math.max(0.54, 1.16 - wave * 0.058);
 }
 
+function startBreather(duration = 2.4, label = "COLLECT") {
+  breatherTimer = Math.max(breatherTimer || 0, duration);
+  spawnTimer = Math.max(spawnTimer || 0, Math.min(duration, 1.1));
+  if (label) {
+    addFloatingText(WIDTH / 2, 86, label, "#6df6d5");
+  }
+}
+
+function scheduleThreat(type, delay, label, color, themeKey = currentWaveTheme().key) {
+  pendingThreat = { type, timer: delay, themeKey };
+  spawnTimer = Math.max(spawnTimer || 0, delay + 0.2);
+  addFloatingText(WIDTH / 2, 58, label, color);
+}
+
+function executePendingThreat() {
+  if (!pendingThreat) return false;
+  const threat = pendingThreat;
+  pendingThreat = null;
+  if (threat.type === "formation") {
+    const spawned = spawnFighterFormation(threat.themeKey);
+    if (spawned) startBreather(2.4, "LOOT WINDOW");
+    return spawned;
+  }
+  if (threat.type === "minefield") {
+    const spawned = spawnMinefield();
+    if (spawned) startBreather(2.8, "THREAD THE MINES");
+    return spawned;
+  }
+  if (threat.type === "planet") {
+    spawnMothership();
+    startBreather(2.2, "FRENZY WINDOW");
+    return true;
+  }
+  if (threat.type === "boss") {
+    spawnFirstBoss();
+    return true;
+  }
+  if (threat.type === "jet") return spawnFighterJet();
+  if (threat.type === "splitter") {
+    const spawned = spawnSplitter();
+    if (spawned) startBreather(2.1, "CLEAN SPLITS");
+    return spawned;
+  }
+  if (threat.type === "cargo") return spawnCargoShip();
+  if (threat.type === "ufo") return spawnUfo();
+  return false;
+}
+
 function randomPowerupType() {
   const roll = Math.random();
-  if (roll < 0.22) return "shotgun";
-  if (roll < 0.44) return "trident";
-  if (roll < 0.68) return "missiles";
+  if (roll < 0.28) return "shotgun";
+  if (roll < 0.54) return "laser";
+  if (roll < 0.78) return "missiles";
   return "machinegun";
 }
 
@@ -2168,22 +2336,63 @@ function nearestDrone(x, y) {
   return best || planetFallback;
 }
 
-function spawnMissile(offset) {
+function spawnMissile(offset, source = player, options = {}) {
   audio.missile();
-  const target = nearestDrone(player.x, player.y);
+  const target = nearestDrone(source.x, source.y);
   missiles.push({
-    x: player.x + offset,
-    y: player.y - 10,
-    vx: offset * 5,
-    vy: -280,
-    r: 6,
-    power: 2.7,
+    x: source.x + offset,
+    y: source.y - 10,
+    vx: options.vx ?? offset * 5,
+    vy: options.vy ?? -280,
+    r: options.r || 6,
+    power: options.power || 2.7,
     aoe: hasSOverdrive() ? S_RANK_MISSILE_AOE : 0,
     kind: "missile",
     target,
-    life: 2.6,
-    turn: 8,
+    life: options.life || 2.6,
+    turn: options.turn || 8,
   });
+}
+
+function callMissileSupport() {
+  const fromLeft = Math.random() < 0.5;
+  const startX = fromLeft ? -64 : WIDTH + 64;
+  const startY = HEIGHT + 48;
+  const vx = fromLeft ? 270 : -270;
+  const vy = -420;
+  supportShips = [];
+  for (let i = 0; i < 5; i += 1) {
+    const row = i % 2;
+    const column = i - 2;
+    const x = startX - column * (fromLeft ? 26 : -26);
+    const y = startY + Math.abs(column) * 18 + row * 18;
+    supportShips.push({
+      x,
+      y,
+      vx,
+      vy,
+      offset: column,
+      fireTimer: 0.12 + i * 0.08,
+      life: 2.4,
+      maxLife: 2.4,
+      wobble: rand(0, Math.PI * 2),
+      color: "#8a7dff",
+    });
+    supportPathLanes.push({
+      x1: x - vx * 0.2,
+      y1: y - vy * 0.2,
+      x2: x + vx * 2.45,
+      y2: y + vy * 2.45,
+      color: SUPPORT_PATH_COLORS[i],
+      life: 3.05,
+      maxLife: 3.05,
+      width: 1.4 + (i === 2 ? 0.35 : 0),
+      phase: rand(0, Math.PI * 2),
+    });
+  }
+  addFloatingText(WIDTH / 2, HEIGHT - 120, "MISSILE SUPPORT", "#8a7dff");
+  addRingBurst(WIDTH / 2, HEIGHT - 90, "#8a7dff", 26, 10, 280, 3.2);
+  shake = Math.max(shake, 0.14);
 }
 
 function fireShot(x, y, angle, speed, radius, power, color, kind = "normal", life) {
@@ -2201,12 +2410,33 @@ function fireShot(x, y, angle, speed, radius, power, color, kind = "normal", lif
   playerShots.push(shot);
 }
 
+function fireRicochetShot(offset, spread = 0) {
+  const originX = player.x + offset;
+  const originY = player.y - 8;
+  const angle = -Math.PI / 2 + spread;
+  fireShot(originX, originY, angle, 880, 5, 0.05, "#ff5b74", "sweeper", 0.62);
+  const shot = playerShots[playerShots.length - 1];
+  shot.bounces = 3;
+  shot.bounceRange = 190;
+  shot.lastTarget = null;
+  addMuzzleBlast(originX, originY, { angle, color: "#ff5b74", coreColor: "#ffd166", type: "burst", size: 0.78, life: 0.08 });
+}
+
 function fireDefaultShot() {
   const critical = hasSOverdrive() && Math.random() < 0.15;
   const color = critical ? "#ffd166" : "#6df6d5";
   const power = critical ? 2.4 : 1.2;
   fireShot(player.x, player.y - 16, -Math.PI / 2, critical ? 660 : 620, critical ? 6 : 5, power, color, critical ? "critical" : "normal");
   addMuzzleBlast(player.x, player.y - 16, { angle: -Math.PI / 2, color, coreColor: "#edf7f5", type: "burst", size: critical ? 1.15 : 0.95, life: critical ? 0.13 : 0.105 });
+  ejectShell(player.x + rand(-4, 4), player.y + 1, {
+    side: Math.random() < 0.5 ? -1 : 1,
+    color,
+    size: critical ? 5.2 : 4.4,
+    speed: critical ? 220 : 170,
+    minSpeed: critical ? 96 : 72,
+    life: critical ? 0.82 : 0.68,
+    gravity: critical ? 520 : 450,
+  });
   if (critical) {
     addParticles(player.x, player.y - 18, "#ffd166", 8, 170);
   }
@@ -2222,12 +2452,12 @@ function spawnRadialBlast() {
       fireShot(player.x, player.y, angle, speed, 5, 1.45, "#6df6d5", "ultimate", 0.92 + waveIndex * 0.18);
     }
   }
-  addFloatingText(player.x, player.y - 34, "TRIPLE BLAST", "#6df6d5");
+  addFloatingText(player.x, player.y - 34, "3-FOLD SHOT", "#6df6d5");
   addParticles(player.x, player.y, "#6df6d5", 48, 310);
   shake = Math.max(shake, 0.16);
 }
 
-function spawnTridentBlast() {
+function spawnSixfoldBlast() {
   audio.ultimate("burst");
   for (let waveIndex = 0; waveIndex < 6; waveIndex += 1) {
     const count = 34;
@@ -2237,7 +2467,7 @@ function spawnTridentBlast() {
       fireShot(player.x, player.y, angle, speed, 5, 1.65, "#6df6d5", "ultimate", 1.15 + waveIndex * 0.13);
     }
   }
-  addFloatingText(player.x, player.y - 34, "SIXFOLD BLAST", "#6df6d5");
+  addFloatingText(player.x, player.y - 34, "6-FOLD SHOT", "#6df6d5");
   addParticles(player.x, player.y, "#6df6d5", 86, 380);
   shake = Math.max(shake, 0.24);
 }
@@ -2278,8 +2508,47 @@ function triggerMiniNuke() {
   hitStop = Math.max(hitStop, 0.13);
 }
 
+function triggerBreachBlast() {
+  audio.ultimate("nuke");
+  for (let waveIndex = 0; waveIndex < 3; waveIndex += 1) {
+    const count = 17 + waveIndex * 4;
+    const spread = 0.9 + waveIndex * 0.1;
+    const speed = 560 + waveIndex * 70;
+    for (let i = 0; i < count; i += 1) {
+      const ratio = count === 1 ? 0 : i / (count - 1) - 0.5;
+      const angle = -Math.PI / 2 + ratio * spread + rand(-0.018, 0.018);
+      const centerWeight = 1 - Math.min(1, Math.abs(ratio) * 2);
+      const power = 2.15 + centerWeight * 1.05;
+      const life = 0.48 + waveIndex * 0.07 - Math.abs(ratio) * 0.08;
+      fireShot(player.x + rand(-4, 4), player.y - 18, angle, speed - Math.abs(ratio) * 90, 8, power, centerWeight > 0.55 ? "#edf7f5" : "#ffd166", "shotgun", life);
+    }
+  }
+  for (let i = 0; i < 6; i += 1) {
+    ejectShell(player.x + rand(-10, 10), player.y - 3 + rand(-3, 5), {
+      side: i % 2 === 0 ? -1 : 1,
+      color: "#ffd166",
+      size: rand(6, 8),
+      speed: 190,
+      minSpeed: 90,
+      life: 0.9,
+      gravity: 520,
+    });
+  }
+  addMuzzleBlast(player.x, player.y - 18, { angle: -Math.PI / 2, color: "#ffd166", coreColor: "#edf7f5", type: "cone", size: 2.25, life: 0.28 });
+  addFloatingText(player.x, player.y - 34, "BREACH BLAST", "#ffd166");
+  addParticles(player.x, player.y - 20, "#ffd166", 58, 340);
+  addParticles(player.x, player.y - 20, "#edf7f5", 22, 260);
+  shake = Math.max(shake, 0.28);
+  hitStop = Math.max(hitStop, 0.08);
+}
+
 function triggerRapidMissiles() {
   audio.ultimate("missiles");
+  if (hasSOverdrive()) {
+    callMissileSupport();
+    addParticles(player.x, player.y, "#8a7dff", 40, 280);
+    return;
+  }
   player.rapidMissileTimer = 0.95;
   missileTimer = 0;
   addFloatingText(player.x, player.y - 34, "MISSILE STORM", "#8a7dff");
@@ -2287,21 +2556,34 @@ function triggerRapidMissiles() {
   shake = Math.max(shake, 0.12);
 }
 
-function triggerLockdown() {
+function triggerBulletSweep() {
   audio.ultimate("missiles");
-  player.lockdownTimer = 1.65;
+  player.lockdownTimer = 2;
   machineGunTimer = 0;
-  addFloatingText(player.x, player.y - 34, "LOCKDOWN", "#ff5b74");
+  addFloatingText(player.x, player.y - 34, "RICOCHET SWEEP", "#ff5b74");
   addParticles(player.x, player.y, "#ff5b74", 52, 300);
   shake = Math.max(shake, 0.16);
 }
 
+function triggerLanceSweep() {
+  audio.ultimate("burst");
+  player.laserUltimateTimer = 2;
+  player.laserUltimateMax = 2;
+  laserTickTimer = 0.24;
+  addFloatingText(player.x, player.y - 34, "LASER OVERDRIVE", "#2fd46f");
+  addParticles(player.x, player.y - 24, "#2fd46f", 42, 260);
+  addRingBurst(player.x, player.y - 20, "#2fd46f", 24, 7, 260, 3.2);
+  shake = Math.max(shake, 0.16);
+}
+
 const ultimateInfo = {
-  burst: { label: "BURST", color: "#6df6d5", sound: "burst" },
-  trident: { label: "TRIDENT BURST", color: "#6df6d5", sound: "burst" },
+  burst: { label: "3-FOLD SHOT", color: "#6df6d5", sound: "burst" },
+  sixfold: { label: "6-FOLD SHOT", color: "#6df6d5", sound: "burst" },
+  breach: { label: "BREACH BLAST", color: "#ffd166", sound: "nuke" },
   nuke: { label: "MINI NUKE", color: "#ffd166", sound: "nuke" },
+  laser: { label: "LASER OVERDRIVE", color: "#2fd46f", sound: "burst" },
   missiles: { label: "MISSILE STORM", color: "#8a7dff", sound: "missiles" },
-  lockdown: { label: "LOCKDOWN", color: "#ff5b74", sound: "lockdown" },
+  lockdown: { label: "RICOCHET SWEEP", color: "#ff5b74", sound: "lockdown" },
 };
 
 function activeWeaponInSlot(slot) {
@@ -2316,8 +2598,12 @@ function activatePowerup(type, fromQueue = false) {
     if (type === "missiles") missileTimer = 0.2;
     if (type === "machinegun") machineGunTimer = 0.05;
   } else {
-    player.mainWeapon = type === "trident" ? "trident" : "shotgun";
+    player.mainWeapon = type === "laser" ? "laser" : "shotgun";
     player.mainTimer = 8;
+    if (type === "laser") {
+      player.laserWarmup = 0.38;
+      laserTickTimer = 0.16;
+    }
   }
   const label = type === "machinegun" ? "MACHINE GUN" : type.toUpperCase();
   addFloatingText(player.x, player.y - (fromQueue ? 44 : 28), fromQueue ? `READY: ${label}` : label, info.color);
@@ -2354,43 +2640,45 @@ function collectPowerup(type) {
   return true;
 }
 
-function queuedUltimateType() {
+function queuedUltimateTypes() {
   const mainWeapon = effectiveMainWeapon();
-  if (mainWeapon === "shotgun") return "nuke";
-  if (mainWeapon === "trident") return "trident";
-  if (player.subWeapon === "missiles") return "missiles";
-  if (player.subWeapon === "machinegun") return "lockdown";
-  return "burst";
+  const types = [];
+  if (mainWeapon === "shotgun") types.push(hasSOverdrive() ? "nuke" : "breach");
+  else if (mainWeapon === "laser") types.push("laser");
+  else types.push(hasSOverdrive() ? "sixfold" : "burst");
+  if (player.subWeapon === "missiles") types.push("missiles");
+  if (player.subWeapon === "machinegun") types.push("lockdown");
+  return types;
 }
 
 function fireQueuedUltimate(type) {
   if (type === "nuke") {
     triggerMiniNuke();
-  } else if (type === "trident") {
-    spawnTridentBlast();
+  } else if (type === "breach") {
+    triggerBreachBlast();
+  } else if (type === "sixfold") {
+    spawnSixfoldBlast();
   } else if (type === "missiles") {
     triggerRapidMissiles();
   } else if (type === "lockdown") {
-    triggerLockdown();
+    triggerBulletSweep();
+  } else if (type === "laser") {
+    triggerLanceSweep();
   } else {
     spawnRadialBlast();
   }
 }
 
-function ultimateNeedsFiringInput(type) {
-  return type === "missiles" || type === "lockdown";
-}
-
 function beginUltimateCue() {
-  const type = queuedUltimateType();
-  const info = ultimateInfo[type];
+  const types = queuedUltimateTypes();
+  const info = ultimateInfo[types[types.length - 1]] || ultimateInfo.burst;
   player.charge = minimumEnergy();
   const healed = healPlayer(1);
   ultimateCue = {
     x: player.x,
     y: player.y,
-    type,
-    label: info.label,
+    types,
+    label: types.map((type) => ultimateInfo[type].label).join(" + "),
     color: info.color,
     timer: ULTIMATE_CUE_DURATION,
     life: ULTIMATE_CUE_DURATION + 0.8,
@@ -2398,7 +2686,7 @@ function beginUltimateCue() {
     fired: false,
   };
   audio.ultimateCharge(info.sound);
-  addFloatingText(player.x, player.y - 42, info.label, info.color);
+  addFloatingText(player.x, player.y - 42, ultimateCue.label, info.color);
   if (!healed) {
     addFloatingText(player.x, player.y - 62, "HULL FULL", "#7cf7a8");
   }
@@ -2631,12 +2919,12 @@ function updateUltimateCue(dt) {
   ultimateCue.y += (player.y - ultimateCue.y) * 0.32;
   ultimateCue.timer -= dt;
   ultimateCue.life -= dt;
-  if (!ultimateCue.fired && ultimateCue.timer <= 0 && (!pointer.leftDown || !ultimateNeedsFiringInput(ultimateCue.type))) {
+  if (!ultimateCue.fired && ultimateCue.timer <= 0) {
     ultimateCue.fired = true;
-    fireQueuedUltimate(ultimateCue.type);
+    ultimateCue.types.forEach((type) => fireQueuedUltimate(type));
     hitStop = Math.max(hitStop, 0.055);
   }
-  if (ultimateCue.life <= 0 && (ultimateCue.fired || !ultimateNeedsFiringInput(ultimateCue.type))) {
+  if (ultimateCue.life <= 0 && ultimateCue.fired) {
     ultimateCue = null;
   }
 }
@@ -2676,6 +2964,10 @@ function damageDrone(drone, amount, kind = "normal", impactAngle = -Math.PI / 2)
       triggerMotherlandEvacuation(drone, drone.x, drone.y);
       return { shieldHit: false, armorHit: false, hpHit: false, invulnerable: true };
     }
+  if (drone.type === "mine" && drone.mineState !== "armed") {
+    drone.flash = Math.max(drone.flash || 0, 0.08);
+    return { shieldHit: false, armorHit: false, hpHit: false, invulnerable: true };
+  }
   if (!isDroneVulnerable(drone)) {
     return { shieldHit: false, armorHit: false, hpHit: false, invulnerable: true };
   }
@@ -2691,7 +2983,7 @@ function damageDrone(drone, amount, kind = "normal", impactAngle = -Math.PI / 2)
     remaining = 0;
   }
   if (remaining > 0 && drone.shield > 0) {
-    const shieldDamageMultiplier = kind === "machinegun" || kind === "lockdown" ? 0.35 : 1;
+    const shieldDamageMultiplier = kind === "machinegun" || kind === "lockdown" || kind === "sweeper" ? 0.35 : 1;
     const effectiveShieldDamage = remaining * shieldDamageMultiplier;
     const absorbed = Math.min(drone.shield, effectiveShieldDamage);
     const rawConsumed = shieldDamageMultiplier > 0 ? absorbed / shieldDamageMultiplier : remaining;
@@ -2708,7 +3000,7 @@ function damageDrone(drone, amount, kind = "normal", impactAngle = -Math.PI / 2)
     hit = true;
   }
   if (hit) {
-    const strength = kind === "shotgun" || kind === "mine" || kind === "ultimate" ? 1.55 : kind === "missile" ? 1.25 : kind === "machinegun" || kind === "lockdown" ? 0.55 : 1;
+    const strength = kind === "shotgun" || kind === "mine" || kind === "ultimate" ? 1.55 : kind === "missile" ? 1.25 : kind === "machinegun" || kind === "lockdown" || kind === "sweeper" ? 0.55 : 1;
     triggerDroneImpact(drone, impactAngle, strength);
   }
   return { shieldHit, armorHit, hpHit: remaining > 0 };
@@ -2721,7 +3013,7 @@ function impactLayer(result) {
 }
 
 function requestHitStop(kind) {
-  if (kind === "missile" || kind === "machinegun" || kind === "lockdown" || kind === "ultimate") return;
+  if (kind === "missile" || kind === "machinegun" || kind === "lockdown" || kind === "sweeper" || kind === "ultimate") return;
   if (hitStopCooldown > 0) return;
   const duration = kind === "shotgun" ? 0.052 : 0.026;
   hitStop = Math.max(hitStop, duration);
@@ -2748,16 +3040,16 @@ function destroyDrone(drone, grantCharge = true) {
   requestKillImpact(drone.type);
   recordKill(drone.type);
   registerStreakKill(drone.type, drone.x, drone.y);
-  const reward = drone.type === "mothership" ? 1600 : drone.type === "cargo" ? 520 : drone.type === "jet" ? 420 : drone.type === "splitter" ? 360 : drone.type === "mine" ? 120 : drone.type === "splitterShard" ? 60 : 250;
+  const reward = drone.type === "mothership" ? 1600 : drone.type === "cargo" ? 520 : drone.type === "jet" ? 420 : drone.type === "splitter" ? splitterStats(drone.splitterTier || "L").reward : drone.type === "mine" ? 120 : drone.type === "splitterShard" ? 60 : 250;
   const toughness = Math.max(0, drone.maxHp - 3);
   const energyChance = clamp(0.34 + toughness * 0.055 + (drone.type === "ufo" ? 0.08 : drone.type === "jet" ? 0.06 : 0), 0.34, 0.78);
   const powerupChance = clamp(0.12 + toughness * 0.018 + (drone.type === "ufo" ? 0.04 : drone.type === "jet" ? 0.03 : 0), 0.12, 0.27);
   score += reward;
   addFloatingText(drone.x, drone.y - 18, `+${reward}`, "#ffd166");
   if (drone.type === "splitter") {
-    spawnSplitterShards(drone);
+    spawnSplitterChildren(drone);
   }
-  if (drone.type === "splitterShard" || drone.type === "mine") {
+  if (drone.type === "splitterShard" || drone.type === "mine" || (drone.type === "splitter" && (drone.splitterTier || "L") !== "L")) {
     // Cleanup threats should not flood the reward economy.
   } else if (drone.type === "cargo") {
     spawnEnergyShard(drone.x, drone.y);
@@ -2841,6 +3133,7 @@ function damageBossTarget(target, amount) {
       audio.setMusicMode("normal");
       nextBossWave += 5;
       spawnTimer = 2.2;
+      startBreather(3.8, "RECOVER");
       shake = Math.max(shake, 0.48);
     } else if (boss.hp <= 0) {
       boss.hp = 1;
@@ -2864,6 +3157,125 @@ function hitBossWithProjectile(projectile, amount) {
     }
   }
   return false;
+}
+
+function resolveBulletClearingShots() {
+  const clearers = playerShots.filter((shot) => shot.kind === "machinegun" || shot.kind === "sweeper");
+  if (!clearers.length || !bullets.length) return;
+  const erased = new Set();
+  clearers.forEach((shot) => {
+    bullets.forEach((bullet, index) => {
+      if (erased.has(index)) return;
+      const radius = (shot.r || 4) + (bullet.r || 4) + (shot.kind === "sweeper" ? 8 : 3) + (bullet.laser ? 10 : 0);
+      if (dist2(shot, bullet) <= radius * radius) {
+        erased.add(index);
+        const color = bullet.laser ? "#ffd166" : shot.kind === "sweeper" ? "#edf7f5" : "#ff5b74";
+        addParticles(bullet.x, bullet.y, color, bullet.laser ? 16 : shot.kind === "sweeper" ? 9 : 7, bullet.laser ? 220 : 150);
+        addParticles(bullet.x, bullet.y, "#edf7f5", bullet.laser ? 7 : 4, 120);
+        addRingBurst(bullet.x, bullet.y, bullet.laser ? "#ffd166" : "#ff5b74", shot.kind === "sweeper" ? 14 : 10, bullet.laser ? 7 : 4, 190, 2.2);
+        addFloatingText(bullet.x, bullet.y - 10, bullet.laser ? "LASER CUT" : "CUT", color);
+      }
+    });
+  });
+  if (erased.size) {
+    bullets = bullets.filter((_, index) => !erased.has(index));
+  }
+}
+
+function updatePlayerLaser(dt) {
+  playerLaserBeam = null;
+  if (!isLaserActive()) return;
+  const ultimate = player.laserUltimateTimer > 0;
+  const overdrive = hasSOverdrive();
+  const range = ultimate ? 620 : overdrive ? 520 : 440;
+  const width = ultimate ? 42 : overdrive ? 18 : 13;
+  const angle = -Math.PI / 2;
+  const x = player.x;
+  const y1 = player.y - 25;
+  const warmupProgress = ultimate ? 1 : 1 - clamp((player.laserWarmup || 0) / 0.38, 0, 1);
+  const easedWarmup = warmupProgress * warmupProgress * (3 - 2 * warmupProgress);
+  const currentRange = range * Math.max(0.08, easedWarmup);
+  const x2 = x + Math.cos(angle) * currentRange;
+  const y2 = y1 + Math.sin(angle) * currentRange;
+  playerLaserBeam = {
+    x,
+    y1,
+    x2,
+    y2,
+    width,
+    ultimate,
+    overdrive,
+    warmup: easedWarmup,
+    angle,
+    pulse: 0.5 + Math.sin(elapsed * (ultimate ? 28 : 18)) * 0.5,
+  };
+  if (!ultimate && easedWarmup < 0.92) return;
+  laserTickTimer -= dt;
+  if (laserTickTimer > 0) return;
+  laserTickTimer = ultimate ? 0.035 : overdrive ? 0.045 : 0.058;
+  const damage = ultimate ? 2.6 : overdrive ? 0.92 : 0.68;
+  const xPadding = width * 0.5;
+  const hitColor = ultimate ? "#edf7f5" : "#2fd46f";
+  let hitSomething = false;
+  const hitSegments = [{ x1: x, y1, x2, y2 }];
+
+  const beamDistance2 = (target) => {
+    let best = { d2: Infinity, px: x, py: y1 };
+    hitSegments.forEach((segment) => {
+      const ax = segment.x1;
+      const ay = segment.y1;
+      const bx = segment.x2;
+      const by = segment.y2;
+      const dx = bx - ax;
+      const dy = by - ay;
+      const length2 = dx * dx + dy * dy || 1;
+      const t = clamp(((target.x - ax) * dx + (target.y - ay) * dy) / length2, 0, 1);
+      const px = ax + dx * t;
+      const py = ay + dy * t;
+      const d2 = dist2(target, { x: px, y: py });
+      if (d2 < best.d2) best = { d2, px, py };
+    });
+    return best;
+  };
+
+  drones.forEach((drone) => {
+    if (drone.hp <= 0) return;
+    if (drone.type === "mothership") {
+      const beamHit = beamDistance2(drone);
+      if (beamHit.d2 > (drone.r + xPadding) ** 2) return;
+      triggerMotherlandEvacuation(drone, beamHit.px, beamHit.py);
+      drone.hitShake = Math.max(drone.hitShake || 0, ultimate ? 0.22 : 0.12);
+      addParticles(beamHit.px, beamHit.py, "#2fd46f", ultimate ? 8 : 4, 120);
+      addRingBurst(beamHit.px, beamHit.py, "#2fd46f", ultimate ? 12 : 7, 3, 160, 2);
+      hitSomething = true;
+      return;
+    }
+    if (!isDroneVulnerable(drone)) return;
+    const beamHit = beamDistance2(drone);
+    if (beamHit.d2 > (drone.r + xPadding) ** 2) return;
+    const result = damageDrone(drone, damage * streakDamageMultiplier(), "laser", angle);
+    registerStreakHit("laser", drone.x, drone.y);
+    drone.flash = Math.max(drone.flash, 0.08);
+    addParticles(beamHit.px, beamHit.py, impactLayer(result) === "armor" ? "#ffd166" : hitColor, ultimate ? 5 : 3, 90);
+    audio.enemyHit("laser", drone.hp / drone.maxHp, impactLayer(result));
+    hitSomething = true;
+    if (drone.hp <= 0) destroyDrone(drone);
+  });
+
+  if (boss) {
+    bossTargets().forEach((target) => {
+      const beamHit = beamDistance2(target);
+      if (beamHit.d2 > (target.r + xPadding) ** 2) return;
+      damageBossTarget(target, damage * 0.82 * streakDamageMultiplier());
+      addParticles(beamHit.px, beamHit.py, hitColor, ultimate ? 4 : 2, 90);
+      hitSomething = true;
+    });
+  }
+
+  if (hitSomething) {
+    shake = Math.max(shake, ultimate ? 0.055 : 0.025);
+  }
+  audio.laser();
 }
 
 function updatePlayerTrail(dt, previousX, previousY) {
@@ -2910,21 +3322,23 @@ function updatePlayer(dt) {
 
   player.invuln = Math.max(0, player.invuln - dt);
   if (circleUltimate && !circleUltimate.resolved) {
+    playerLaserBeam = null;
     player.invuln = Math.max(player.invuln, 0.12);
     pointer.rightDown = false;
     player.x = clamp(player.x, 18, WIDTH - 18);
     player.y = clamp(player.y, 18, HEIGHT - 18);
     return;
   }
-  const powerupDt = pointer.leftDown ? 0 : dt;
-  player.mainTimer = Math.max(0, player.mainTimer - powerupDt);
+  player.mainTimer = Math.max(0, player.mainTimer - dt);
   if (player.mainTimer <= 0) {
     player.mainWeapon = "normal";
     activateQueuedPowerup("main");
   }
-  player.subTimer = Math.max(0, player.subTimer - powerupDt);
+  player.subTimer = Math.max(0, player.subTimer - dt);
   player.rapidMissileTimer = Math.max(0, player.rapidMissileTimer - dt);
   player.lockdownTimer = Math.max(0, player.lockdownTimer - dt);
+  player.laserUltimateTimer = Math.max(0, (player.laserUltimateTimer || 0) - dt);
+  player.laserWarmup = Math.max(0, (player.laserWarmup || 0) - dt);
   if (player.subTimer <= 0) {
     player.subWeapon = "none";
     activateQueuedPowerup("sub");
@@ -2933,9 +3347,10 @@ function updatePlayer(dt) {
   player.x = clamp(player.x, 18, WIDTH - 18);
   player.y = clamp(player.y, 18, HEIGHT - 18);
   updatePlayerTrail(dt, previousX, previousY);
+  updatePlayerLaser(dt);
   const frenzyScale = isPlayerFrenzied() ? 1.32 : 1;
 
-  if (!pointer.leftDown && (player.subWeapon === "missiles" || player.rapidMissileTimer > 0)) {
+  if (player.subWeapon === "missiles" || player.rapidMissileTimer > 0) {
     missileTimer -= dt * frenzyScale;
     if (missileTimer <= 0) {
       if (player.rapidMissileTimer > 0) {
@@ -2949,21 +3364,21 @@ function updatePlayer(dt) {
     }
   }
 
-  if (!pointer.leftDown && (player.subWeapon === "machinegun" || player.lockdownTimer > 0)) {
+  if (player.subWeapon === "machinegun" || player.lockdownTimer > 0) {
     machineGunTimer -= dt * frenzyScale;
     if (machineGunTimer <= 0) {
       if (player.lockdownTimer > 0) {
         [-18, -10, 10, 18].forEach((offset, index) => {
           const spread = (index - 1.5) * 0.075;
-          const angle = -Math.PI / 2 + spread;
-          fireShot(player.x + offset, player.y - 8, angle, 860, 4, 0.24, "#ff5b74", "lockdown", 0.44);
-          addMuzzleBlast(player.x + offset, player.y - 8, { angle, color: "#ff5b74", coreColor: "#ffd166", type: "burst", size: 0.78, life: 0.08 });
+          fireRicochetShot(offset, spread);
         });
       } else {
-        fireShot(player.x - 12, player.y - 7, -Math.PI / 2, 800, 3, 0.16, "#ff5b74", "machinegun", 0.36);
-        fireShot(player.x + 12, player.y - 7, -Math.PI / 2, 800, 3, 0.16, "#ff5b74", "machinegun", 0.36);
+        fireShot(player.x - 12, player.y - 7, -Math.PI / 2, 800, 3, 0.05, "#ff5b74", "machinegun", 0.24);
+        fireShot(player.x + 12, player.y - 7, -Math.PI / 2, 800, 3, 0.05, "#ff5b74", "machinegun", 0.24);
         addMuzzleBlast(player.x - 12, player.y - 7, { angle: -Math.PI / 2, color: "#ff5b74", coreColor: "#ffd166", type: "burst", size: 0.68, life: 0.075 });
         addMuzzleBlast(player.x + 12, player.y - 7, { angle: -Math.PI / 2, color: "#ff5b74", coreColor: "#ffd166", type: "burst", size: 0.68, life: 0.075 });
+        ejectShell(player.x - 16, player.y + 2, { side: -1, color: "#ff5b74", size: 5.2, speed: 210, minSpeed: 95, life: 0.82, gravity: 520 });
+        ejectShell(player.x + 16, player.y + 2, { side: 1, color: "#ff5b74", size: 5.2, speed: 210, minSpeed: 95, life: 0.82, gravity: 520 });
       }
       audio.machineGun();
       machineGunTimer = (player.lockdownTimer > 0 ? 0.03 : 0.045) / frenzyScale;
@@ -2971,7 +3386,7 @@ function updatePlayer(dt) {
   }
 
   shotTimer -= dt * frenzyScale;
-  if (shotTimer <= 0 && !pointer.leftDown) {
+  if (shotTimer <= 0) {
     const mainWeapon = effectiveMainWeapon();
     if (mainWeapon === "shotgun") {
       const overdrive = hasSOverdrive();
@@ -2988,74 +3403,97 @@ function updatePlayer(dt) {
       }
       addMuzzleBlast(player.x, player.y - 18, { angle: -Math.PI / 2, color: "#ffd166", coreColor: "#edf7f5", type: "cone", size: overdrive ? 1.46 : 1.32, life: 0.22 });
       addParticles(player.x, player.y - 18, overdrive ? "#edf7f5" : "#ffd166", overdrive ? 24 : 18, overdrive ? 230 : 190);
+      for (let i = 0; i < 3; i += 1) {
+        ejectShell(player.x + rand(-6, 6), player.y - 2 + rand(-2, 5), {
+          side: i % 2 === 0 ? -1 : 1,
+          color: overdrive ? "#edf7f5" : "#ffd166",
+          size: rand(7.5, 10),
+          speed: 290,
+          minSpeed: 130,
+          life: 1.08,
+          gravity: 620,
+        });
+      }
       audio.shotgun();
       shotTimer = 0.58 / frenzyScale;
-    } else if (mainWeapon === "trident") {
-      const overdrive = hasSOverdrive();
-      fireShot(player.x, player.y - 16, -Math.PI / 2, 630, overdrive ? 9 : 5, overdrive ? 1.45 : 1.15, overdrive ? "#edf7f5" : "#6df6d5", "normal");
-      fireShot(player.x - 4, player.y - 14, -Math.PI / 2 - 0.18, 610, 5, 1.05, "#6df6d5", "normal");
-      fireShot(player.x + 4, player.y - 14, -Math.PI / 2 + 0.18, 610, 5, 1.05, "#6df6d5", "normal");
-      addMuzzleBlast(player.x, player.y - 16, { angle: -Math.PI / 2, color: "#6df6d5", coreColor: "#edf7f5", type: "burst", size: 1.06, life: 0.11 });
-      addMuzzleBlast(player.x - 4, player.y - 14, { angle: -Math.PI / 2 - 0.18, color: "#6df6d5", coreColor: "#edf7f5", type: "burst", size: 0.82, life: 0.095 });
-      addMuzzleBlast(player.x + 4, player.y - 14, { angle: -Math.PI / 2 + 0.18, color: "#6df6d5", coreColor: "#edf7f5", type: "burst", size: 0.82, life: 0.095 });
-      audio.shoot();
-      shotTimer = 0.13 / frenzyScale;
+    } else if (mainWeapon === "laser") {
+      addMuzzleBlast(player.x, player.y - 22, { angle: -Math.PI / 2, color: "#2fd46f", coreColor: "#edf7f5", type: "laser", size: hasSOverdrive() ? 0.82 : 0.62, life: 0.08 });
+      shotTimer = 0.11 / frenzyScale;
     } else {
-      fireDefaultShot();
+      if (hasSOverdrive()) {
+        fireShot(player.x, player.y - 16, -Math.PI / 2, 630, 5, 1.2, "#6df6d5", "normal");
+        fireShot(player.x - 4, player.y - 14, -Math.PI / 2 - 0.18, 610, 5, 1.2, "#6df6d5", "normal");
+        fireShot(player.x + 4, player.y - 14, -Math.PI / 2 + 0.18, 610, 5, 1.2, "#6df6d5", "normal");
+        addMuzzleBlast(player.x, player.y - 16, { angle: -Math.PI / 2, color: "#6df6d5", coreColor: "#edf7f5", type: "burst", size: 1.06, life: 0.11 });
+        addMuzzleBlast(player.x - 4, player.y - 14, { angle: -Math.PI / 2 - 0.18, color: "#6df6d5", coreColor: "#edf7f5", type: "burst", size: 0.82, life: 0.095 });
+        addMuzzleBlast(player.x + 4, player.y - 14, { angle: -Math.PI / 2 + 0.18, color: "#6df6d5", coreColor: "#edf7f5", type: "burst", size: 0.82, life: 0.095 });
+        ejectShell(player.x - 8, player.y + 1, { side: -1, color: "#6df6d5", size: 4.5, speed: 170, minSpeed: 72, life: 0.68, gravity: 450 });
+        ejectShell(player.x + 8, player.y + 1, { side: 1, color: "#6df6d5", size: 4.5, speed: 170, minSpeed: 72, life: 0.68, gravity: 450 });
+        shotTimer = 0.13 / frenzyScale;
+      } else {
+        fireDefaultShot();
+        shotTimer = 0.095 / frenzyScale;
+      }
       audio.shoot();
-      shotTimer = 0.095 / frenzyScale;
     }
-  } else if (pointer.leftDown) {
-    shotTimer = Math.min(shotTimer, 0.04);
-    missileTimer = Math.min(missileTimer, 0.08);
-    machineGunTimer = Math.min(machineGunTimer, 0.04);
   }
 }
 
 function updateEnemies(dt) {
-  if (!boss && wave >= nextBossWave) {
-    spawnFirstBoss();
+  if (!boss && wave >= nextBossWave && (!pendingThreat || pendingThreat.type !== "boss")) {
+    scheduleThreat("boss", 1.15, "BOSS SIGNAL", "#ff5b74");
   }
+  const theme = currentWaveTheme();
+  const themeKey = theme.key;
+  breatherTimer = Math.max(0, (breatherTimer || 0) - dt);
+  lootBreatherCooldown = Math.max(0, (lootBreatherCooldown || 0) - dt);
   mothershipSpawnCooldown = Math.max(0, mothershipSpawnCooldown - dt);
   formationTimer = Math.max(0, formationTimer - dt);
   minefieldTimer = Math.max(0, minefieldTimer - dt);
+  if (pendingThreat) {
+    pendingThreat.timer -= dt;
+    if (pendingThreat.timer <= 0) {
+      executePendingThreat();
+    }
+  }
   spawnTimer -= dt;
-  if (!boss && spawnTimer <= 0) {
+  if (!boss && !pendingThreat && breatherTimer <= 0 && spawnTimer <= 0) {
     const canFormation = wave >= 1 && formationTimer <= 0 && !activeMothership() && activeEnemyCount("ship") <= 12;
     const canMinefield = wave >= 2 && minefieldTimer <= 0 && activeEnemyCount("mine") <= 5;
     let didFormation = false;
-    if (canFormation && spawnFighterFormation()) {
+    if ((themeKey === "formation" || (themeKey === "mixed" && Math.random() < 0.45) || Math.random() < 0.2) && canFormation) {
       didFormation = true;
       formationTimer = rand(FORMATION_SPAWN_DELAY[0], FORMATION_SPAWN_DELAY[1]);
-      spawnTimer = Math.max(0.72, currentSpawnDelay() * 1.05);
-    } else if (canMinefield && spawnMinefield()) {
+      scheduleThreat("formation", 0.85, "FORMATION INCOMING", "#ffd166", themeKey);
+    } else if ((themeKey === "mine" || (themeKey === "mixed" && Math.random() < 0.38) || Math.random() < 0.14) && canMinefield) {
       didFormation = true;
       minefieldTimer = rand(MINEFIELD_SPAWN_DELAY[0], MINEFIELD_SPAWN_DELAY[1]);
-      spawnTimer = Math.max(0.72, currentSpawnDelay() * 1.02);
+      scheduleThreat("minefield", 0.95, "MINEFIELD AHEAD", "#ff5b74", themeKey);
     } else if (mothershipSpawnCooldown <= 0 && !activeMothership() && Math.random() < 0.11) {
-      spawnMothership();
+      scheduleThreat("planet", 1.0, "PLANETARY FIELD", FRENZY_AURA_COLOR, themeKey);
       mothershipSpawnCooldown = 24;
-    } else if (wave >= 3 && activeEnemyCount("jet") < 2 && Math.random() < 0.28) {
-      spawnFighterJet();
-    } else if (wave >= 4 && activeEnemyCount("splitter") < SPLITTER_MAX_ACTIVE && Math.random() < 0.42) {
-      spawnSplitter();
-    } else if (wave >= 3 && activeEnemyCount("cargo") < 1 && Math.random() < 0.25) {
+    } else if (wave >= 3 && activeEnemyCount("jet") < 2 && Math.random() < (themeKey === "jet" ? 0.58 : 0.28)) {
+      scheduleThreat("jet", 0.7, "JET LOCKERS", "#edf7f5", themeKey);
+    } else if (wave >= 4 && activeEnemyCount("splitter") < SPLITTER_MAX_ACTIVE && Math.random() < (themeKey === "mixed" ? 0.52 : 0.42)) {
+      scheduleThreat("splitter", 0.75, "SPLITTER CELL", "#ff5b74", themeKey);
+    } else if (wave >= 3 && activeEnemyCount("cargo") < 1 && Math.random() < (themeKey === "cargo" ? 0.62 : 0.25)) {
       spawnCargoShip();
-    } else if (wave >= 2 && Math.random() < 0.50) {
+    } else if (wave >= 2 && Math.random() < (themeKey === "ufo" ? 0.68 : 0.50)) {
       spawnUfo();
     } else {
       spawnDrone();
     }
     if (!didFormation) {
       const mothershipPresent = Boolean(activeMothership());
-      if (wave >= 2 && Math.random() < (mothershipPresent ? 0.34 : 0.62)) {
-        if (wave >= 3 && activeEnemyCount("jet") < 2 && Math.random() < 0.26) {
+      const extraChance = themeKey === "formation" ? 0.58 : themeKey === "mixed" ? 0.52 : mothershipPresent ? 0.24 : 0.44;
+      if (wave >= 2 && Math.random() < extraChance) {
+        if (wave >= 3 && activeEnemyCount("jet") < 2 && Math.random() < (themeKey === "jet" ? 0.42 : 0.24)) {
           spawnFighterJet();
-        } else if (wave >= 4 && activeEnemyCount("splitter") < SPLITTER_MAX_ACTIVE && Math.random() < 0.36) {
+        } else if (wave >= 4 && activeEnemyCount("splitter") < SPLITTER_MAX_ACTIVE && Math.random() < (themeKey === "mixed" ? 0.42 : 0.32)) {
           spawnSplitter();
-        } else if (wave >= 3 && activeEnemyCount("cargo") < 1 && Math.random() < 0.24) {
+        } else if (wave >= 3 && activeEnemyCount("cargo") < 1 && Math.random() < (themeKey === "cargo" ? 0.42 : 0.2)) {
           spawnCargoShip();
-        } else if (wave >= 2 && Math.random() < 0.42) {
+        } else if (wave >= 2 && Math.random() < (themeKey === "ufo" ? 0.55 : 0.38)) {
           spawnUfo();
         } else {
           spawnDrone();
@@ -3064,11 +3502,26 @@ function updateEnemies(dt) {
       const baseSpawnDelay = currentSpawnDelay();
       spawnTimer = baseSpawnDelay * (activeMothership() ? MOTHERSHIP_SPAWN_SLOWDOWN : 1);
     }
+  } else if (!boss && breatherTimer > 0) {
+    spawnTimer = Math.max(spawnTimer, 0.35);
+  }
+
+  const activeThreatCount = drones.filter((drone) => !drone.exiting && drone.hp > 0 && drone.type !== "mothership").length;
+  if (!boss && !pendingThreat && breatherTimer <= 0 && lootBreatherCooldown <= 0 && activeThreatCount <= 1 && (shards.length + powerups.length) >= 3) {
+    lootBreatherCooldown = 8;
+    startBreather(1.8, "COLLECT");
   }
 
   drones.forEach((drone) => {
     if (isDroneOnPlayerScreen(drone)) {
       drone.enteredScreen = true;
+    }
+    if (!drone.exiting && drone.type !== "mothership" && drone.enteredScreen && drone.y - drone.r > HEIGHT + 6) {
+      drone.exiting = true;
+      drone.cooldown = 99;
+      drone.vx = clamp(drone.vx || rand(-18, 18), -80, 80);
+      drone.vy = Math.max(drone.vy || 0, 96);
+      drone.targetY = drone.y + 120;
     }
     drone.wobble += dt * (drone.type === "ufo" ? 4.2 : drone.type === "mothership" ? 1.6 : drone.type === "cargo" ? 2.1 : drone.type === "splitter" || drone.type === "splitterShard" ? 4.8 : 3);
     if (drone.type === "ufo") {
@@ -3080,6 +3533,18 @@ function updateEnemies(dt) {
     }
     if (drone.type === "mine") {
       drone.spin += dt * (drone.spinSpeed || 1.4);
+      if (drone.mineState === "incoming" && isDroneOnPlayerScreen(drone)) {
+        drone.mineState = "arming";
+        drone.armingTimer = drone.armingMax || 0.58;
+        addRingBurst(drone.x, drone.y, "#ffd166", 14, 5, 170, 2.2);
+      } else if (drone.mineState === "arming") {
+        drone.armingTimer = Math.max(0, (drone.armingTimer || 0) - dt);
+        if (drone.armingTimer <= 0) {
+          drone.mineState = "armed";
+          addFloatingText(drone.x, drone.y - 20, "ARMED", "#ffd166");
+          addRingBurst(drone.x, drone.y, "#ff5b74", 18, 7, 210, 2.8);
+        }
+      }
     }
     const rooted = isDroneRooted(drone);
     if (!rooted && !drone.exiting && ENEMY_FORWARD_DRIFT[drone.type]) {
@@ -3095,7 +3560,7 @@ function updateEnemies(dt) {
       }
     } else if (drone.exiting) {
       drone.x += drone.vx * dt;
-      drone.y -= 24 * dt;
+      drone.y += (drone.vy || 96) * dt;
       drone.cooldown = 99;
     } else if (drone.type === "mothership") {
       drone.y += MOTHERLAND_PASS_DRIFT * dt;
@@ -3112,7 +3577,8 @@ function updateEnemies(dt) {
       const progress = clamp((drone.y + 80) / (HEIGHT * 0.72), 0, 1);
       const arc = Math.sin(progress * Math.PI + path.arcPhase) * path.arcAmp;
       const sway = Math.sin(elapsed * 3.4 + drone.wobble) * path.sway;
-      const targetX = clamp(path.laneX + path.offsetX + arc + sway, 28, WIDTH - 28);
+      const sweep = (path.sweep || 0) * progress;
+      const targetX = clamp(path.laneX + path.offsetX + arc + sweep + sway, 28, WIDTH - 28);
       drone.x += (targetX - drone.x) * Math.min(1, dt * 7);
       drone.vx = targetX - drone.x;
     } else if (drone.type === "ufo") {
@@ -3141,9 +3607,15 @@ function updateEnemies(dt) {
       drone.y += drone.vy * dt;
       if (drone.lifetime <= 0) drone.exiting = true;
     } else if (drone.type === "splitter") {
-      drone.y += (drone.targetY - drone.y) * dt * 0.58 + Math.sin(drone.wobble) * 1.05;
+      drone.splitBirth = Math.max(0, (drone.splitBirth || 0) - dt);
+      const tier = drone.splitterTier || "L";
+      const verticalPull = tier === "L" ? 0.58 : tier === "M" ? 0.74 : 0.92;
+      const drift = tier === "L" ? 1.05 : tier === "M" ? 1.4 : 1.8;
+      drone.y += (drone.targetY - drone.y) * dt * verticalPull + Math.sin(drone.wobble) * drift + (drone.vy || 0) * dt;
       drone.x += drone.vx * dt;
-      drone.vx += Math.sin(drone.wobble * 0.7) * 9 * dt;
+      drone.vx += Math.sin(drone.wobble * 0.7) * (tier === "L" ? 9 : 14) * dt;
+      drone.vx *= tier === "L" ? 0.998 : 0.992;
+      if (drone.y > HEIGHT + 80) drone.exiting = true;
     } else {
       drone.y += (drone.targetY - drone.y) * dt * 0.75 + Math.sin(drone.wobble) * (drone.type === "cargo" ? 0.35 : 0.55);
       drone.x += drone.vx * dt;
@@ -3230,8 +3702,13 @@ function updateEnemies(dt) {
       } else if (drone.type === "cargo") {
         drone.cooldown = 99;
       } else if (drone.type === "splitter") {
-      spawnBullet(drone.x, drone.y + 6, angle, 150 + wave * 6, 4, isFrenziedEnemy(drone) ? "#ff5b74" : "#ff8c42");
-        drone.cooldown = isFrenziedEnemy(drone) ? rand(1.45, 2.0) : rand(2.35, 3.2);
+        const tier = drone.splitterTier || "L";
+        const stats = splitterStats(tier);
+        const speed = (tier === "L" ? 145 : tier === "M" ? 158 : 172) + wave * 5;
+        spawnBullet(drone.x, drone.y + drone.r * 0.28, angle, speed, tier === "S" ? 3 : 4, isFrenziedEnemy(drone) ? "#ff5b74" : stats.color);
+        addMuzzleBlast(drone.x, drone.y + drone.r * 0.28, { angle, color: stats.color, coreColor: "#ffd166", type: "danger", size: tier === "L" ? 0.6 : 0.45, life: 0.07 });
+        const cooldownScale = isFrenziedEnemy(drone) ? 0.72 : 1;
+        drone.cooldown = rand(stats.cooldown[0], stats.cooldown[1]) * cooldownScale;
       } else {
         spawnBullet(drone.x, drone.y, angle, (172 + wave * 10) * (isFrenziedEnemy(drone) ? 1.16 : 1), 5, isFrenziedEnemy(drone) ? "#ff5b74" : "#ff8c42");
         drone.cooldown = isFrenziedEnemy(drone) ? rand(FRENZIED_FIGHTER_FIRE_DELAY[0], FRENZIED_FIGHTER_FIRE_DELAY[1]) : rand(FIGHTER_FIRE_DELAY[0], FIGHTER_FIRE_DELAY[1]);
@@ -3241,7 +3718,7 @@ function updateEnemies(dt) {
 
   drones = drones.filter((drone) => {
     if (drone.hp <= 0) return false;
-    if (drone.exiting) return drone.x > -110 && drone.x < WIDTH + 110 && drone.y > -100;
+    if (drone.exiting) return drone.x > -110 && drone.x < WIDTH + 110 && drone.y > -100 && drone.y < HEIGHT + 140;
     if (drone.type === "mothership") return drone.y < HEIGHT + drone.r + 80;
     if (drone.type === "splitterShard") return drone.x > -70 && drone.x < WIDTH + 70 && drone.y > -80 && drone.y < HEIGHT + 80;
     return drone.x > -70 && drone.x < WIDTH + 70 && drone.y < HEIGHT + 110;
@@ -3343,6 +3820,60 @@ function updateProjectiles(dt) {
     }
   });
 
+  supportShips.forEach((ship) => {
+    ship.life -= dt;
+    ship.wobble += dt * 7;
+    ship.x += ship.vx * dt;
+    ship.y += ship.vy * dt + Math.sin(ship.wobble) * 0.8;
+    const travelAngle = Math.atan2(ship.vy, ship.vx);
+    const trailX = ship.x - Math.cos(travelAngle) * 18;
+    const trailY = ship.y - Math.sin(travelAngle) * 18;
+    SUPPORT_TRAIL_COLORS.forEach((color, index) => {
+      supportTrails.push({
+        x: trailX + (index - 2) * 3.4 + rand(-1.2, 1.2),
+        y: trailY + rand(-1.5, 1.5),
+        color,
+        life: 0.42,
+        maxLife: 0.42,
+        size: 3.2 - Math.abs(index - 2) * 0.25,
+      });
+    });
+    const canFireSupportMissiles = ship.y <= HEIGHT * 0.55;
+    if (canFireSupportMissiles) {
+      ship.fireTimer -= dt;
+    }
+    if (canFireSupportMissiles && ship.fireTimer <= 0) {
+      spawnMissile(0, ship, {
+        vx: ship.vx * 0.12 + rand(-55, 55),
+        vy: -330 + rand(-40, 20),
+        power: 2.1,
+        life: 2.9,
+        turn: 10.5,
+      });
+      const muzzleAngle = Math.atan2(ship.vy, ship.vx);
+      addMuzzleBlast(ship.x + Math.cos(muzzleAngle) * 16, ship.y + Math.sin(muzzleAngle) * 16, {
+        angle: muzzleAngle,
+        color: "#8a7dff",
+        coreColor: "#edf7f5",
+        type: "burst",
+        size: 1.02,
+        life: 0.11,
+      });
+      ship.fireTimer = 0.24 + Math.random() * 0.08;
+    }
+  });
+  supportShips = supportShips.filter((ship) => ship.life > 0 && ship.x > -140 && ship.x < WIDTH + 140 && ship.y > -160);
+  supportTrails.forEach((trail) => {
+    trail.life -= dt;
+    trail.y += 36 * dt;
+  });
+  supportTrails = supportTrails.filter((trail) => trail.life > 0);
+  supportPathLanes.forEach((lane) => {
+    lane.life -= dt;
+    lane.phase += dt * 2.4;
+  });
+  supportPathLanes = supportPathLanes.filter((lane) => lane.life > 0);
+
   missiles.forEach((missile) => {
     const targetIsBoss = missile.target === boss && boss;
     const shouldPreferEnemy = missile.target && missile.target.type === "mothership" && hasVulnerableNonPlanetEnemy();
@@ -3372,6 +3903,7 @@ function updateProjectiles(dt) {
 
 function resolveCollisions() {
   const circleActive = circleUltimate && !circleUltimate.resolved;
+  resolveBulletClearingShots();
   drones.forEach((drone) => {
     if (circleActive || drone.hp <= 0 || player.invuln > 0 || drone.type === "mothership") return;
     const hitRadius = player.r + drone.r - 1;
@@ -3432,13 +3964,13 @@ function resolveCollisions() {
         }
         const result = damageDrone(drone, shot.power * streakDamageMultiplier(), shot.kind || "normal", projectileImpactAngle(shot, drone));
         registerStreakHit(shot.kind || "normal", shot.x, shot.y);
-        if (shot.kind === "machinegun" || shot.kind === "lockdown") {
-          suppressDrone(drone, shot.kind === "lockdown" ? 1.35 : 0.85);
+        if (shot.kind === "machinegun" && hasSOverdrive()) {
+          drone.rootTimer = Math.max(drone.rootTimer || 0, 0.45);
         }
         requestHitStop(shot.kind || "normal");
         shake = Math.max(shake, shot.kind === "shotgun" ? 0.06 : 0.035);
-        const hitText = shot.kind === "machinegun" || shot.kind === "lockdown" ? "JAMMED" : result.shieldHit && !result.hpHit ? "SHIELD" : result.armorHit ? "ARMOR" : "";
-        const hitColor = shot.kind === "machinegun" || shot.kind === "lockdown" ? "#ff5b74" : result.shieldHit ? SHIELD_COLOR : "#ffd166";
+        const hitText = result.shieldHit && !result.hpHit ? "SHIELD" : result.armorHit ? "ARMOR" : "";
+        const hitColor = result.shieldHit ? SHIELD_COLOR : "#ffd166";
         if (hitText) {
           addFloatingText(drone.x, drone.y - 24, hitText, hitColor);
         }
@@ -3446,6 +3978,20 @@ function resolveCollisions() {
         audio.enemyHit(shot.kind || "normal", drone.hp / drone.maxHp, impactLayer(result));
         if (drone.hp <= 0) {
           destroyDrone(drone);
+        }
+        if (shot.kind === "sweeper" && (shot.bounces || 0) > 0) {
+          const nextTarget = droneHitOrder().find((candidate) => candidate !== drone && candidate.hp > 0 && candidate.type !== "mothership" && isDroneVulnerable(candidate) && dist2(drone, candidate) < (shot.bounceRange || 190) ** 2);
+          if (nextTarget) {
+            const angle = Math.atan2(nextTarget.y - drone.y, nextTarget.x - drone.x);
+            shot.x = drone.x;
+            shot.y = drone.y;
+            shot.vx = Math.cos(angle) * 880;
+            shot.vy = Math.sin(angle) * 880;
+            shot.bounces -= 1;
+            shot.life = Math.max(shot.life || 0, 0.28);
+            addRingBurst(drone.x, drone.y, "#ff5b74", 10, 3, 140, 1.8);
+            return true;
+          }
         }
         return false;
       }
@@ -3496,7 +4042,7 @@ function resolveCollisions() {
   });
 
   shards = shards.filter((shard) => {
-    const dropStep = circleActive ? 0.16 / 60 : 1 / 60;
+    const dropStep = circleActive ? 0.16 / 60 : breatherTimer > 0 ? 0.58 / 60 : 1 / 60;
     shard.life -= dropStep;
     shard.wobble += 0.045;
     shard.vy += 0.18 * (circleActive ? 0.16 : 1);
@@ -3520,7 +4066,7 @@ function resolveCollisions() {
   });
 
   powerups = powerups.filter((powerup) => {
-    const dropStep = circleActive ? 0.16 / 60 : 1 / 60;
+    const dropStep = circleActive ? 0.16 / 60 : breatherTimer > 0 ? 0.58 / 60 : 1 / 60;
     powerup.life -= dropStep;
     powerup.collectDelay = Math.max(0, (powerup.collectDelay || 0) - dropStep);
     powerup.vy += 0.16 * (circleActive ? 0.16 : 1);
@@ -3639,6 +4185,7 @@ function updateParticles(dt) {
     particle.x += particle.vx * dt;
     particle.y += particle.vy * dt;
     particle.angle += (particle.spin || 0) * dt;
+    particle.vy += (particle.gravity || 0) * dt;
     particle.vx *= particle.drag || 0.98;
     particle.vy *= particle.drag || 0.98;
     particle.life -= dt;
@@ -3846,6 +4393,11 @@ function update(dt) {
 
   elapsed += dt;
   wave = Math.max(wave, 1 + Math.floor(elapsed / 28));
+  if (wave !== announcedWave) {
+    announcedWave = wave;
+    const theme = currentWaveTheme();
+    addFloatingText(WIDTH / 2, 72, `WAVE ${wave}: ${theme.label}`, theme.color);
+  }
   shake = Math.max(0, shake - dt);
   updatePlayerDamageFeedback(dt);
   updatePlayerHealFeedback(dt);
@@ -4240,14 +4792,6 @@ function drawStreakAura() {
       drawSparkMarker(x, y, activeLayer.color, 0.22 + intensity * 0.16, elapsed * (2.4 + i), pulse);
     }
 
-    ctx.globalAlpha = 0.74;
-    ctx.fillStyle = activeLayer.color;
-    ctx.shadowColor = activeLayer.color;
-    ctx.shadowBlur = 10;
-    ctx.font = "900 11px ui-monospace, Consolas, monospace";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText(activeLayer.grade, 0, tailLength + 12);
   }
   ctx.restore();
 }
@@ -4481,21 +5025,26 @@ function drawDrone(drone) {
 
 function drawMine(drone) {
   const pulse = 0.5 + Math.sin(elapsed * 8 + drone.wobble) * 0.5;
+  const armed = drone.mineState === "armed";
+  const arming = drone.mineState === "arming";
+  const incoming = drone.mineState === "incoming";
+  const armingRatio = arming ? 1 - clamp((drone.armingTimer || 0) / (drone.armingMax || 0.58), 0, 1) : armed ? 1 : 0;
+  const mineColor = armed ? "#ff5b74" : arming ? "#ffd166" : "#7b3038";
   ctx.save();
   ctx.translate(drone.x, drone.y);
   applyDroneImpactTransform(drone);
   ctx.rotate(drone.spin || 0);
-  ctx.globalAlpha = 0.16 + pulse * 0.12;
-  ctx.strokeStyle = "#ff5b74";
-  ctx.shadowColor = "#ff5b74";
-  ctx.shadowBlur = 12 + pulse * 10;
+  ctx.globalAlpha = incoming ? 0.24 : 0.16 + pulse * 0.12 + armingRatio * 0.1;
+  ctx.strokeStyle = mineColor;
+  ctx.shadowColor = mineColor;
+  ctx.shadowBlur = incoming ? 4 : 12 + pulse * 10 + armingRatio * 8;
   ctx.lineWidth = 2;
   ctx.beginPath();
   ctx.arc(0, 0, drone.r + 7 + pulse * 3, 0, Math.PI * 2);
   ctx.stroke();
 
   ctx.globalAlpha = 1;
-  ctx.fillStyle = drone.flash > 0 ? "#edf7f5" : "#2f3038";
+  ctx.fillStyle = drone.flash > 0 ? "#edf7f5" : incoming ? "#202326" : "#2f3038";
   ctx.strokeStyle = "#071014";
   ctx.shadowBlur = 0;
   ctx.lineWidth = 3;
@@ -4504,9 +5053,9 @@ function drawMine(drone) {
   ctx.fill();
   ctx.stroke();
 
-  ctx.strokeStyle = "#ff5b74";
-  ctx.shadowColor = "#ff5b74";
-  ctx.shadowBlur = 8 + pulse * 8;
+  ctx.strokeStyle = mineColor;
+  ctx.shadowColor = mineColor;
+  ctx.shadowBlur = incoming ? 3 : 8 + pulse * 8;
   ctx.lineWidth = 2;
   for (let i = 0; i < 8; i += 1) {
     const angle = (i / 8) * Math.PI * 2;
@@ -4516,15 +5065,37 @@ function drawMine(drone) {
     ctx.stroke();
   }
 
-  ctx.fillStyle = "#ffd166";
-  ctx.shadowColor = "#ffd166";
-  ctx.shadowBlur = 8;
+  if (arming) {
+    ctx.globalAlpha = 0.35 + armingRatio * 0.45;
+    ctx.strokeStyle = "#ffd166";
+    ctx.shadowColor = "#ffd166";
+    ctx.shadowBlur = 12;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(0, 0, drone.r + 13 + armingRatio * 12, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  ctx.globalAlpha = incoming ? 0.42 : 1;
+  ctx.fillStyle = armed ? "#ffd166" : arming ? "#edf7f5" : "#7b3038";
+  ctx.shadowColor = ctx.fillStyle;
+  ctx.shadowBlur = incoming ? 3 : 8;
   ctx.beginPath();
   ctx.arc(0, 0, 5 + pulse * 1.5, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
 
-  drawDefenseMeters(drone, drone.x, drone.y + drone.r + 12, 34);
+  if (!armed) {
+    ctx.save();
+    ctx.globalAlpha = incoming ? 0.42 : 0.72;
+    ctx.fillStyle = arming ? "#ffd166" : "#91a4a0";
+    ctx.font = "800 8px ui-monospace, Consolas, monospace";
+    ctx.textAlign = "center";
+    ctx.fillText(arming ? "ARMING" : "SAFE", drone.x, drone.y + drone.r + 16);
+    ctx.restore();
+  } else {
+    drawDefenseMeters(drone, drone.x, drone.y + drone.r + 12, 34);
+  }
 }
 
 function drawFighterJet(drone) {
@@ -4675,15 +5246,18 @@ function drawCargoShip(drone) {
 function drawSplitter(drone) {
   drawShieldLayer(drone);
   drawFrenzyEffect(drone);
+  const stats = splitterStats(drone.splitterTier || "L");
+  const scale = drone.r / 22;
   const pulse = 0.5 + Math.sin(elapsed * 7 + drone.wobble) * 0.5;
+  const birth = clamp((drone.splitBirth || 0) / 0.42, 0, 1);
   ctx.save();
-  ctx.globalAlpha = 0.16 + pulse * 0.12;
+  ctx.globalAlpha = 0.16 + pulse * 0.12 + birth * 0.28;
   ctx.strokeStyle = "#ff5b74";
-  ctx.shadowColor = "#ff5b74";
-  ctx.shadowBlur = 16 + pulse * 10;
+  ctx.shadowColor = stats.color;
+  ctx.shadowBlur = 16 + pulse * 10 + birth * 18;
   ctx.lineWidth = 2;
   ctx.beginPath();
-  ctx.arc(drone.x, drone.y, drone.r + 9 + pulse * 4, 0, Math.PI * 2);
+  ctx.arc(drone.x, drone.y, drone.r + 9 + pulse * 4 + birth * 16, 0, Math.PI * 2);
   ctx.stroke();
   ctx.restore();
 
@@ -4691,7 +5265,8 @@ function drawSplitter(drone) {
   ctx.translate(drone.x, drone.y);
   applyDroneImpactTransform(drone);
   ctx.rotate(angleTowardPlayer(drone) + Math.sin(drone.wobble) * 0.08);
-  ctx.fillStyle = drone.flash > 0 ? "#edf7f5" : isFrenziedEnemy(drone) ? "#d83f56" : "#9b56d9";
+  ctx.scale(scale, scale);
+  ctx.fillStyle = drone.flash > 0 ? "#edf7f5" : isFrenziedEnemy(drone) ? "#d83f56" : stats.color;
   ctx.strokeStyle = "#071014";
   ctx.lineWidth = 3;
   ctx.beginPath();
@@ -4709,7 +5284,7 @@ function drawSplitter(drone) {
 
   ctx.strokeStyle = "#ff5b74";
   ctx.shadowColor = "#ff5b74";
-  ctx.shadowBlur = 8 + pulse * 8;
+  ctx.shadowBlur = 8 + pulse * 8 + birth * 8;
   ctx.lineWidth = 2;
   ctx.beginPath();
   ctx.moveTo(-7, -10);
@@ -4722,12 +5297,16 @@ function drawSplitter(drone) {
   ctx.shadowBlur = 0;
 
   ctx.fillStyle = "#ffd166";
+  ctx.font = "900 8px ui-monospace, Consolas, monospace";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(stats.tier, -7, 0);
   ctx.beginPath();
   ctx.arc(12, 0, 4.5, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
 
-  drawDefenseMeters(drone, drone.x, drone.y + 23, 42);
+  drawDefenseMeters(drone, drone.x, drone.y + drone.r + 3, Math.max(28, drone.r * 1.9));
   drawSuppressionEffect(drone);
 }
 
@@ -5020,6 +5599,73 @@ function drawMissile(missile) {
   ctx.stroke();
   ctx.fillStyle = "#ffd166";
   ctx.fillRect(-3, 7, 6, 7);
+  ctx.restore();
+}
+
+function drawSupportShip(ship) {
+  const angle = Math.atan2(ship.vy, ship.vx) + Math.PI / 2;
+  const fade = clamp(ship.life / ship.maxLife, 0, 1);
+  ctx.save();
+  ctx.translate(ship.x, ship.y);
+  ctx.rotate(angle);
+  ctx.globalAlpha = clamp(fade * 1.25, 0, 1);
+  ctx.shadowColor = "#8a7dff";
+  ctx.shadowBlur = 14;
+  ctx.fillStyle = "#2b2750";
+  ctx.strokeStyle = "#edf7f5";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(0, -18);
+  ctx.lineTo(13, 10);
+  ctx.lineTo(4, 6);
+  ctx.lineTo(0, 17);
+  ctx.lineTo(-4, 6);
+  ctx.lineTo(-13, 10);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = "#8a7dff";
+  ctx.beginPath();
+  ctx.arc(0, -4, 4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#ffd166";
+  ctx.fillRect(-8, 9, 4, 7);
+  ctx.fillRect(4, 9, 4, 7);
+  ctx.restore();
+}
+
+function drawSupportPathLane(lane) {
+  const t = clamp(lane.life / lane.maxLife, 0, 1);
+  const intro = clamp((lane.maxLife - lane.life) / 0.34, 0, 1);
+  const alpha = Math.min(intro, t) * 0.2;
+  const dx = lane.x2 - lane.x1;
+  const dy = lane.y2 - lane.y1;
+  const angle = Math.atan2(dy, dx);
+  const length = Math.hypot(dx, dy);
+  const pulse = (Math.sin(lane.phase) + 1) * 0.5;
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  ctx.translate(lane.x1, lane.y1);
+  ctx.rotate(angle);
+  ctx.strokeStyle = lane.color;
+  ctx.lineWidth = lane.width;
+  ctx.globalAlpha = alpha;
+  ctx.setLineDash([18, 18]);
+  ctx.lineDashOffset = -lane.phase * 10;
+  ctx.shadowColor = lane.color;
+  ctx.shadowBlur = 8 + pulse * 5;
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.lineTo(length, 0);
+  ctx.stroke();
+  ctx.globalAlpha = alpha * 0.45;
+  ctx.lineWidth = lane.width + 5;
+  ctx.setLineDash([]);
+  ctx.shadowBlur = 0;
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.lineTo(length, 0);
+  ctx.stroke();
   ctx.restore();
 }
 
@@ -5587,6 +6233,66 @@ function drawMagnetField() {
   ctx.restore();
 }
 
+function drawPlayerLaserBeam() {
+  if (!playerLaserBeam) return;
+  const beam = playerLaserBeam;
+  const t = beam.pulse || 0;
+  const color = beam.ultimate ? "#edf7f5" : "#2fd46f";
+  const core = beam.ultimate ? "#2fd46f" : "#edf7f5";
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  ctx.lineCap = "round";
+  ctx.shadowColor = color;
+  ctx.shadowBlur = beam.ultimate ? 26 : 16;
+  ctx.globalAlpha = beam.ultimate ? 0.24 : 0.16;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = beam.width * (2.4 + t * 0.45);
+  ctx.beginPath();
+  ctx.moveTo(beam.x, beam.y1);
+  ctx.lineTo(beam.x2, beam.y2);
+  ctx.stroke();
+  ctx.globalAlpha = beam.ultimate ? 0.58 : 0.42;
+  ctx.lineWidth = beam.width * (1.08 + t * 0.18);
+  ctx.strokeStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(beam.x, beam.y1);
+  ctx.lineTo(beam.x2, beam.y2);
+  ctx.stroke();
+  ctx.globalAlpha = 0.9;
+  ctx.lineWidth = Math.max(2.2, beam.width * 0.28);
+  ctx.strokeStyle = core;
+  ctx.beginPath();
+  ctx.moveTo(beam.x, beam.y1);
+  ctx.lineTo(beam.x2, beam.y2);
+  ctx.stroke();
+  ctx.globalAlpha = 0.7;
+  ctx.fillStyle = core;
+  ctx.beginPath();
+  ctx.arc(beam.x, beam.y1, beam.width * 0.42 + t * 2, 0, Math.PI * 2);
+  ctx.fill();
+  const tipX = beam.x2;
+  const tipY = beam.y2;
+  const sparkSize = beam.width * (beam.ultimate ? 0.9 : 0.65) + t * 7;
+  ctx.globalAlpha = beam.ultimate ? 0.9 : 0.72;
+  ctx.shadowBlur = beam.ultimate ? 24 : 14;
+  ctx.strokeStyle = core;
+  ctx.lineWidth = beam.ultimate ? 3 : 2;
+  for (let i = 0; i < 8; i += 1) {
+    const angle = (beam.angle || -Math.PI / 2) + (i / 7 - 0.5) * Math.PI * 0.92 + Math.sin(elapsed * 18 + i) * 0.16;
+    const inner = sparkSize * 0.24;
+    const outer = sparkSize * (0.8 + ((i % 3) * 0.16)) + Math.sin(elapsed * 22 + i * 1.7) * 4;
+    ctx.beginPath();
+    ctx.moveTo(tipX + Math.cos(angle) * inner, tipY + Math.sin(angle) * inner);
+    ctx.lineTo(tipX + Math.cos(angle) * outer, tipY + Math.sin(angle) * outer);
+    ctx.stroke();
+  }
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(tipX, tipY, Math.max(3, beam.width * 0.22 + t * 2), 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
 function drawPlayerShip({ ghost = false, scale = 1 } = {}) {
   const flicker = player.invuln > 0 && Math.floor(elapsed * 14) % 2;
   const hull = flicker ? "#edf7f5" : ghost ? "rgba(109, 246, 213, 0.22)" : "#6df6d5";
@@ -5718,7 +6424,7 @@ function draw() {
 
   playerShots.forEach((shot) => {
     ctx.fillStyle = shot.color || (shot.power > 1 ? "#edf7f5" : "#6df6d5");
-    if (shot.kind === "machinegun" || shot.kind === "lockdown") {
+    if (shot.kind === "machinegun" || shot.kind === "lockdown" || shot.kind === "sweeper") {
       ctx.fillRect(shot.x - 2, shot.y - 9, 4, 14);
     } else if (shot.life) {
       ctx.beginPath();
@@ -5736,6 +6442,28 @@ function draw() {
 
   missiles.forEach((missile) => {
     drawMissile(missile);
+  });
+
+  supportPathLanes.forEach((lane) => {
+    drawSupportPathLane(lane);
+  });
+
+  supportTrails.forEach((trail) => {
+    const t = clamp(trail.life / trail.maxLife, 0, 1);
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    ctx.globalAlpha = t * 0.42;
+    ctx.fillStyle = trail.color;
+    ctx.shadowColor = trail.color;
+    ctx.shadowBlur = 10;
+    ctx.beginPath();
+    ctx.ellipse(trail.x, trail.y, trail.size * (1.2 + (1 - t) * 2.2), trail.size, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  });
+
+  supportShips.forEach((ship) => {
+    drawSupportShip(ship);
   });
 
   bullets.forEach((bullet) => {
@@ -5815,6 +6543,19 @@ function draw() {
       ctx.lineTo(-size * 0.55, size * 0.35);
       ctx.closePath();
       ctx.fill();
+    } else if (particle.shape === "shell") {
+      const size = particle.size || 5;
+      ctx.fillStyle = particle.color || "#c58b42";
+      ctx.shadowColor = particle.color || "#ffd166";
+      ctx.shadowBlur = 8;
+      ctx.fillRect(-size * 0.65, -size * 0.24, size * 1.3, size * 0.48);
+      ctx.fillStyle = "rgba(237, 247, 245, 0.78)";
+      ctx.fillRect(size * 0.12, -size * 0.24, size * 0.26, size * 0.48);
+      ctx.fillStyle = "rgba(255, 241, 184, 0.72)";
+      ctx.fillRect(-size * 0.42, -size * 0.18, size * 0.56, size * 0.14);
+      ctx.strokeStyle = "rgba(7, 16, 20, 0.62)";
+      ctx.lineWidth = 1;
+      ctx.strokeRect(-size * 0.65, -size * 0.24, size * 1.3, size * 0.48);
     } else if (particle.shape === "dot") {
       ctx.beginPath();
       ctx.arc(0, 0, (particle.size || 3) * 0.5, 0, Math.PI * 2);
@@ -5828,6 +6569,7 @@ function draw() {
   });
   drawFloatingTexts();
   drawMagnetField();
+  drawPlayerLaserBeam();
   drawUltimateCue();
   drawCircleUltimate();
 
@@ -5911,7 +6653,7 @@ window.addEventListener("keydown", (event) => {
     return;
   }
   if (key === "1") spawnDebugPowerup("shotgun");
-  if (key === "2") spawnDebugPowerup("trident");
+  if (key === "2") spawnDebugPowerup("laser");
   if (key === "3") spawnDebugPowerup("missiles");
   if (key === "4") spawnDebugPowerup("machinegun");
   if (key === "e" && player) {
@@ -5965,10 +6707,15 @@ canvas.addEventListener("contextmenu", (event) => {
 startButton.addEventListener("click", resetGame);
 restartButton.addEventListener("click", resetGame);
 resumeButton.addEventListener("click", closePauseMenu);
+pauseMenuTabs.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-menu]");
+  if (!button) return;
+  renderPauseMenu(button.dataset.menu);
+});
 encyclopediaTabs.addEventListener("click", (event) => {
   const button = event.target.closest("button[data-tab]");
   if (!button) return;
-  renderEncyclopedia(button.dataset.tab);
+  renderPauseMenu("encyclopedia", button.dataset.tab);
 });
 encyclopediaBody.addEventListener("input", (event) => {
   const control = event.target.closest("[data-volume]");
@@ -5978,7 +6725,7 @@ encyclopediaBody.addEventListener("input", (event) => {
   updateVolumeUi();
 });
 
-renderEncyclopedia();
+renderPauseMenu();
 updateTitleRecords();
 audio.applyVolumes();
 draw();

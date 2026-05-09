@@ -32,7 +32,7 @@
         <div class="title-controls" aria-label="Quick controls">
           <span>Mouse Movement</span>
           <span>Right Mouse Magnet</span>
-          <span>Left Mouse Cease Fire</span>
+          <span>Auto Fire</span>
         </div>
         <button id="startButton" type="button">Start Run</button>
       </div>
@@ -52,17 +52,20 @@
               <header class="pause-head">
                 <div>
                   <p class="kicker">Paused</p>
-                  <h2>Field Encyclopedia</h2>
+                  <h2>Pause Menu</h2>
                 </div>
                 <button id="resumeButton" class="ghost-button" type="button">Resume</button>
               </header>
+              <nav id="pauseMenuTabs" class="pause-menu-tabs" aria-label="Pause menu sections">
+                <button class="active" type="button" data-menu="encyclopedia">Encyclopedia</button>
+                <button type="button" data-menu="help">Help</button>
+                <button type="button" data-menu="settings">Settings</button>
+              </nav>
               <nav id="encyclopediaTabs" class="encyclopedia-tabs" aria-label="Encyclopedia sections">
                 <button class="active" type="button" data-tab="enemies">Enemies</button>
                 <button type="button" data-tab="weapons">Weapons</button>
                 <button type="button" data-tab="mechanics">Mechanics</button>
-                <button type="button" data-tab="help">Help</button>
                 <button type="button" data-tab="debug">Debug Keys</button>
-                <button type="button" data-tab="settings">Settings</button>
               </nav>
               <div id="encyclopediaBody" class="encyclopedia-body"></div>
             </div>
