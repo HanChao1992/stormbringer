@@ -262,6 +262,14 @@ canvas {
   gap: 14px;
 }
 
+.demo-thanks {
+  margin: 0;
+  color: #edf7f5;
+  font-size: 0.98rem;
+  font-weight: 800;
+  text-align: center;
+}
+
 .summary-score {
   padding: 16px;
   border: 1px solid rgba(109, 246, 213, 0.2);
@@ -372,6 +380,11 @@ canvas {
   min-height: 0;
 }
 
+.pause-actions {
+  display: flex;
+  gap: 8px;
+}
+
 .pause-head h2 {
   margin: 0;
   font-size: 1.8rem;
@@ -380,7 +393,7 @@ canvas {
 }
 
 .ghost-button {
-  min-width: 96px;
+  min-width: 88px;
   min-height: 40px;
   border: 1px solid rgba(109, 246, 213, 0.52);
   border-radius: 6px;
@@ -388,6 +401,12 @@ canvas {
   background: rgba(109, 246, 213, 0.08);
   font-weight: 850;
   cursor: pointer;
+}
+
+.danger-button {
+  border-color: rgba(255, 91, 116, 0.52);
+  color: #ff5b74;
+  background: rgba(255, 91, 116, 0.08);
 }
 
 .ghost-button:hover,

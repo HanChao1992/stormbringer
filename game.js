@@ -7,6 +7,7 @@ const startButton = document.getElementById("startButton");
 const restartButton = document.getElementById("restartButton");
 const pauseMenu = document.getElementById("pauseMenu");
 const resumeButton = document.getElementById("resumeButton");
+const pauseRestartButton = document.getElementById("pauseRestartButton");
 const pauseMenuTabs = document.getElementById("pauseMenuTabs");
 const encyclopediaTabs = document.getElementById("encyclopediaTabs");
 const encyclopediaBody = document.getElementById("encyclopediaBody");
@@ -1717,7 +1718,7 @@ function spawnMothershipShot(x, y, angle, index, count) {
   spawnBullet(x, y, angle + spread, 175 + wave * 8, 5, "#ff8c42");
 }
 
-function spawnBossMissile(x, y, angle) {
+function spawnBossMissile(x, y, angle, ownerId = null) {
   addMuzzleBlast(x, y, { angle, color: "#ffd166", coreColor: "#ff5b74", type: "danger", size: 1.15, life: 0.24 });
   bullets.push({
     x,
@@ -1733,6 +1734,7 @@ function spawnBossMissile(x, y, angle) {
     life: 4.2,
     turnRate: 1.25,
     magnetWeight: 1.15,
+    bossOwnerPart: ownerId,
   });
 }
 
@@ -1872,13 +1874,13 @@ function spawnFirstBoss() {
     armorFlash: 0,
     flash: 0,
     fireTimer: 1.4,
-    missileTimer: 2.2,
+    reinforcementTimer: 5.2,
     wobble: 0,
     parts: [
-      { id: "leftTop", label: "CANNON", offsetX: -76, offsetY: -20, r: 18, hp: 42, maxHp: 42, alive: true, flash: 0 },
-      { id: "rightTop", label: "CANNON", offsetX: 76, offsetY: -20, r: 18, hp: 42, maxHp: 42, alive: true, flash: 0 },
-      { id: "leftBottom", label: "CANNON", offsetX: -58, offsetY: 42, r: 18, hp: 42, maxHp: 42, alive: true, flash: 0 },
-      { id: "rightBottom", label: "CANNON", offsetX: 58, offsetY: 42, r: 18, hp: 42, maxHp: 42, alive: true, flash: 0 },
+      { id: "leftTop", label: "CANNON", offsetX: -76, offsetY: -20, r: 18, hp: 42, maxHp: 42, alive: true, flash: 0, fireTimer: 1.15 },
+      { id: "rightTop", label: "CANNON", offsetX: 76, offsetY: -20, r: 18, hp: 42, maxHp: 42, alive: true, flash: 0, fireTimer: 1.35 },
+      { id: "leftBottom", label: "CANNON", offsetX: -58, offsetY: 42, r: 18, hp: 42, maxHp: 42, alive: true, flash: 0, fireTimer: 1.55 },
+      { id: "rightBottom", label: "CANNON", offsetX: 58, offsetY: 42, r: 18, hp: 42, maxHp: 42, alive: true, flash: 0, fireTimer: 1.75 },
     ],
   };
   addFloatingText(WIDTH / 2, 92, "BOSS: CANNON WARDEN", "#ff5b74");
@@ -1929,6 +1931,40 @@ function spawnFormationFighter(options) {
       startY: options.y,
     },
   });
+}
+
+function spawnBossReinforcements() {
+  if (!boss) return;
+  const maxHp = fighterHp(3 + Math.floor(wave / 4));
+  const slots = [
+    { x: -52, y: 54, vx: -78, targetX: -96 },
+    { x: -22, y: 70, vx: -34, targetX: -42 },
+    { x: 22, y: 70, vx: 34, targetX: 42 },
+    { x: 52, y: 54, vx: 78, targetX: 96 },
+  ];
+  slots.forEach((slot, index) => {
+    const x = clamp(boss.x + slot.x, 28, WIDTH - 28);
+    const y = boss.y + slot.y;
+    drones.push({
+      x,
+      y,
+      vx: slot.vx,
+      targetY: y + 86 + index * 7,
+      r: 16,
+      type: "ship",
+      hp: maxHp,
+      maxHp,
+      cooldown: rand(1.35, 2.2),
+      wobble: rand(0, Math.PI * 2),
+      flash: 0,
+      enteredScreen: true,
+      bossEscort: true,
+    });
+    addMuzzleBlast(x, y, { angle: Math.PI / 2, color: "#ff8c42", coreColor: "#ffd166", type: "danger", size: 0.72, life: 0.12 });
+  });
+  addFloatingText(boss.x, boss.y + 94, "ESCORTS DEPLOYED", "#ff8c42");
+  addRingBurst(boss.x, boss.y + 74, "#ff8c42", 18, 14, 210, 2.8);
+  shake = Math.max(shake, 0.08);
 }
 
 function spawnFighterFormation(themeKey = currentWaveTheme().key) {
@@ -2410,15 +2446,14 @@ function fireShot(x, y, angle, speed, radius, power, color, kind = "normal", lif
   playerShots.push(shot);
 }
 
-function fireRicochetShot(offset, spread = 0) {
+function fireMachineGunUltimateShot(offset, spread = 0) {
   const originX = player.x + offset;
   const originY = player.y - 8;
   const angle = -Math.PI / 2 + spread;
-  fireShot(originX, originY, angle, 880, 5, 0.05, "#ff5b74", "sweeper", 0.62);
+  fireShot(originX, originY, angle, 880, 5, 0.05, "#ff5b74", "sweeper", 0.26);
   const shot = playerShots[playerShots.length - 1];
   shot.bounces = 3;
   shot.bounceRange = 190;
-  shot.lastTarget = null;
   addMuzzleBlast(originX, originY, { angle, color: "#ff5b74", coreColor: "#ffd166", type: "burst", size: 0.78, life: 0.08 });
 }
 
@@ -2975,6 +3010,7 @@ function damageDrone(drone, amount, kind = "normal", impactAngle = -Math.PI / 2)
   let shieldHit = false;
   let armorHit = false;
   let hit = false;
+  const armorBefore = drone.armor || 0;
   if (remaining > 0 && drone.armor > 0) {
     drone.armor = Math.max(0, drone.armor - 1);
     drone.armorFlash = 0.18;
@@ -3000,6 +3036,14 @@ function damageDrone(drone, amount, kind = "normal", impactAngle = -Math.PI / 2)
     hit = true;
   }
   if (hit) {
+    if (drone.type === "cargo" && armorBefore > 0 && (drone.armor || 0) <= 0 && !drone.fleeing) {
+      drone.fleeing = true;
+      drone.fleeFlash = 0.75;
+      drone.vy = Math.max(drone.vy || 0, 132);
+      drone.targetY = Math.max(drone.targetY || drone.y, drone.y + 220);
+      addFloatingText(drone.x, drone.y - 30, "CARGO FLEEING", "#ffd166");
+      addRingBurst(drone.x, drone.y, "#ffd166", 18, 10, 230, 2.8);
+    }
     const strength = kind === "shotgun" || kind === "mine" || kind === "ultimate" ? 1.55 : kind === "missile" ? 1.25 : kind === "machinegun" || kind === "lockdown" || kind === "sweeper" ? 0.55 : 1;
     triggerDroneImpact(drone, impactAngle, strength);
   }
@@ -3103,6 +3147,14 @@ function damageBossTarget(target, amount) {
       registerStreakKill("bossCannon", target.x, target.y);
       addFloatingText(target.x, target.y - 18, "CANNON DOWN", "#ffd166");
       addBossCannonDeath(target.x, target.y);
+      bullets = bullets.filter((bullet) => {
+        const keep = bullet.bossOwnerPart !== target.part.id;
+        if (!keep) {
+          addParticles(bullet.x, bullet.y, "#ffd166", 10, 180);
+          addRingBurst(bullet.x, bullet.y, "#ff5b74", 10, 5, 170, 2.2);
+        }
+        return keep;
+      });
       boss.armor = boss.maxArmor;
       boss.armorFlash = 0.35;
       addFloatingText(boss.x, boss.y - 74, "ARMOR REFRESH", "#ffd166");
@@ -3124,17 +3176,16 @@ function damageBossTarget(target, amount) {
     boss.hp -= amount;
     boss.flash = 0.14;
     if (boss.hp <= 0 && !bossCannonsAlive()) {
+      const bossX = boss.x;
+      const bossY = boss.y;
       score += 2600;
       recordKill("boss");
-      registerStreakKill("boss", boss.x, boss.y);
-      addFloatingText(boss.x, boss.y - 58, "BOSS DOWN", "#ff5b74");
-      addBossTorsoDeath(boss.x, boss.y);
+      registerStreakKill("boss", bossX, bossY);
+      addFloatingText(bossX, bossY - 58, "BOSS DOWN", "#ff5b74");
+      addBossTorsoDeath(bossX, bossY);
       boss = null;
-      audio.setMusicMode("normal");
-      nextBossWave += 5;
-      spawnTimer = 2.2;
-      startBreather(3.8, "RECOVER");
       shake = Math.max(shake, 0.48);
+      endGame("victory");
     } else if (boss.hp <= 0) {
       boss.hp = 1;
       addFloatingText(boss.x, boss.y - 48, "BREAK CANNONS", "#ffd166");
@@ -3160,19 +3211,20 @@ function hitBossWithProjectile(projectile, amount) {
 }
 
 function resolveBulletClearingShots() {
-  const clearers = playerShots.filter((shot) => shot.kind === "machinegun" || shot.kind === "sweeper");
+  const clearers = playerShots.filter((shot) => shot.kind === "machinegun" || shot.kind === "lockdown" || shot.kind === "sweeper");
   if (!clearers.length || !bullets.length) return;
   const erased = new Set();
   clearers.forEach((shot) => {
     bullets.forEach((bullet, index) => {
       if (erased.has(index)) return;
-      const radius = (shot.r || 4) + (bullet.r || 4) + (shot.kind === "sweeper" ? 8 : 3) + (bullet.laser ? 10 : 0);
+      const ultimateClear = shot.kind === "lockdown" || shot.kind === "sweeper";
+      const radius = (shot.r || 4) + (bullet.r || 4) + (ultimateClear ? 8 : 3) + (bullet.laser ? 10 : 0);
       if (dist2(shot, bullet) <= radius * radius) {
         erased.add(index);
-        const color = bullet.laser ? "#ffd166" : shot.kind === "sweeper" ? "#edf7f5" : "#ff5b74";
-        addParticles(bullet.x, bullet.y, color, bullet.laser ? 16 : shot.kind === "sweeper" ? 9 : 7, bullet.laser ? 220 : 150);
+        const color = bullet.laser ? "#ffd166" : ultimateClear ? "#edf7f5" : "#ff5b74";
+        addParticles(bullet.x, bullet.y, color, bullet.laser ? 16 : ultimateClear ? 9 : 7, bullet.laser ? 220 : 150);
         addParticles(bullet.x, bullet.y, "#edf7f5", bullet.laser ? 7 : 4, 120);
-        addRingBurst(bullet.x, bullet.y, bullet.laser ? "#ffd166" : "#ff5b74", shot.kind === "sweeper" ? 14 : 10, bullet.laser ? 7 : 4, 190, 2.2);
+        addRingBurst(bullet.x, bullet.y, bullet.laser ? "#ffd166" : "#ff5b74", ultimateClear ? 14 : 10, bullet.laser ? 7 : 4, 190, 2.2);
         addFloatingText(bullet.x, bullet.y - 10, bullet.laser ? "LASER CUT" : "CUT", color);
       }
     });
@@ -3370,7 +3422,7 @@ function updatePlayer(dt) {
       if (player.lockdownTimer > 0) {
         [-18, -10, 10, 18].forEach((offset, index) => {
           const spread = (index - 1.5) * 0.075;
-          fireRicochetShot(offset, spread);
+          fireMachineGunUltimateShot(offset, spread);
         });
       } else {
         fireShot(player.x - 12, player.y - 7, -Math.PI / 2, 800, 3, 0.05, "#ff5b74", "machinegun", 0.24);
@@ -3548,7 +3600,8 @@ function updateEnemies(dt) {
     }
     const rooted = isDroneRooted(drone);
     if (!rooted && !drone.exiting && ENEMY_FORWARD_DRIFT[drone.type]) {
-      const drift = ENEMY_FORWARD_DRIFT[drone.type] * dt;
+      const driftSpeed = drone.type === "cargo" && drone.fleeing ? ENEMY_FORWARD_DRIFT.cargo * 2.85 : ENEMY_FORWARD_DRIFT[drone.type];
+      const drift = driftSpeed * dt;
       drone.y += drift;
       drone.targetY = Math.min(HEIGHT + 90, (drone.targetY || drone.y) + drift);
     }
@@ -3635,6 +3688,7 @@ function updateEnemies(dt) {
       }
     }
     drone.flash = Math.max(0, drone.flash - dt);
+    drone.fleeFlash = Math.max(0, (drone.fleeFlash || 0) - dt);
     drone.impactSquash = Math.max(0, (drone.impactSquash || 0) - dt * 2.8);
     drone.armorFlash = Math.max(0, (drone.armorFlash || 0) - dt);
     if (drone.type === "jet") {
@@ -3735,6 +3789,18 @@ function updateBoss(dt) {
   boss.armorFlash = Math.max(0, (boss.armorFlash || 0) - dt);
   boss.parts.forEach((part) => {
     part.flash = Math.max(0, (part.flash || 0) - dt);
+    if (!part.alive || Math.abs(boss.y - boss.targetY) > 28) return;
+    part.fireTimer = Math.max(0, (part.fireTimer || 0) - dt);
+    if (part.fireTimer <= 0) {
+      const x = boss.x + part.offsetX;
+      const y = boss.y + part.offsetY;
+      const baseAngle = Math.atan2(player.y - y, player.x - x);
+      [-0.11, 0.11].forEach((spread) => {
+        spawnBossMissile(x, y, baseAngle + spread, part.id);
+      });
+      part.fireTimer = rand(2.45, 3.15);
+      part.flash = Math.max(part.flash || 0, 0.12);
+    }
   });
 
   boss.fireTimer -= dt;
@@ -3747,18 +3813,14 @@ function updateBoss(dt) {
     boss.fireTimer = rand(1.1, 1.45);
   }
 
-  boss.missileTimer -= dt;
-  if (boss.missileTimer <= 0) {
-    const liveCannons = boss.parts.filter((part) => part.alive);
-    const sources = liveCannons.length ? liveCannons.slice(0, 2) : [{ offsetX: -38, offsetY: 36 }, { offsetX: 38, offsetY: 36 }];
-    sources.forEach((part) => {
-      const x = boss.x + part.offsetX;
-      const y = boss.y + part.offsetY;
-      const angle = Math.atan2(player.y - y, player.x - x);
-      spawnBossMissile(x, y, angle);
-    });
-    boss.missileTimer = rand(2.3, 3.0);
+  if (Math.abs(boss.y - boss.targetY) <= 28) {
+    boss.reinforcementTimer = Math.max(0, (boss.reinforcementTimer || 0) - dt);
+    if (boss.reinforcementTimer <= 0) {
+      spawnBossReinforcements();
+      boss.reinforcementTimer = rand(8.4, 11.2);
+    }
   }
+
 }
 
 function updateProjectiles(dt) {
@@ -3988,7 +4050,7 @@ function resolveCollisions() {
             shot.vx = Math.cos(angle) * 880;
             shot.vy = Math.sin(angle) * 880;
             shot.bounces -= 1;
-            shot.life = Math.max(shot.life || 0, 0.28);
+            shot.life = Math.max(shot.life || 0, 0.16);
             addRingBurst(drone.x, drone.y, "#ff5b74", 10, 3, 140, 1.8);
             return true;
           }
@@ -4093,14 +4155,14 @@ function resolveCollisions() {
   }
 }
 
-function endGame() {
+function endGame(outcome = "death") {
   playerDeathSequence = null;
   state = "gameover";
   audio.musicMode = "normal";
   audio.stopMusic();
   pauseMenu.classList.add("hidden");
   overlay.classList.remove("hidden");
-  const summary = buildRunSummary();
+  const summary = buildRunSummary(outcome);
   const previousSummary = lastRunSummary;
   const previousBest = bestRunSummary;
   lastRunSummary = summary;
@@ -4111,16 +4173,17 @@ function endGame() {
   storeSummary(BEST_RUN_KEY, bestRunSummary);
   updateTitleRecords();
   overlay.querySelector(".panel").classList.add("summary-panel");
-  overlay.querySelector(".kicker").textContent = `Score ${summary.score.toLocaleString()} - Wave ${summary.wave}`;
-  overlay.querySelector("h1").textContent = "Signal lost.";
+  overlay.querySelector(".kicker").textContent = `${summary.outcome === "victory" ? "Demo complete" : "Run ended"} - Score ${summary.score.toLocaleString()} - Wave ${summary.wave}`;
+  overlay.querySelector("h1").textContent = summary.outcome === "victory" ? "Demo complete." : "Signal lost.";
   overlay.querySelector(".copy").innerHTML = runSummaryHtml(summary, previousSummary, previousBest);
   restartButton.textContent = "Run It Back";
 }
 
-function buildRunSummary() {
+function buildRunSummary(outcome = "death") {
   return {
     score: Math.round(score),
     wave,
+    outcome,
     bestStreak: bestStreakLevel,
     sRankTime: runStats ? runStats.sRankTime || 0 : 0,
     kills: { ...emptyKills(), ...(runStats ? runStats.kills : {}) },
@@ -4151,6 +4214,7 @@ function runSummaryHtml(summary, previousSummary, previousBest) {
 
   return `
     <section class="run-summary">
+      <p class="demo-thanks">Thank you for playing the Stormbringer demo.</p>
       <div class="summary-score">
         <span>Final Score</span>
         <strong>${summary.score.toLocaleString()}</strong>
@@ -5209,11 +5273,17 @@ function drawUfo(drone) {
 function drawCargoShip(drone) {
   drawShieldLayer(drone);
   drawFrenzyEffect(drone);
+  const fleeing = Boolean(drone.fleeing);
+  const fleePulse = 0.5 + Math.sin(elapsed * 16) * 0.5;
   ctx.save();
   ctx.translate(drone.x, drone.y);
   applyDroneImpactTransform(drone);
   ctx.rotate(drone.vx < 0 ? Math.PI : 0);
-  ctx.fillStyle = drone.flash > 0 ? "#edf7f5" : isFrenziedEnemy(drone) ? "#9d4e42" : "#8b5e2f";
+  if (fleeing) {
+    ctx.shadowColor = "#ffd166";
+    ctx.shadowBlur = 10 + fleePulse * 10;
+  }
+  ctx.fillStyle = drone.flash > 0 ? "#edf7f5" : fleeing ? "#b86e32" : isFrenziedEnemy(drone) ? "#9d4e42" : "#8b5e2f";
   ctx.strokeStyle = "#071014";
   ctx.lineWidth = 3;
   ctx.beginPath();
@@ -5237,6 +5307,15 @@ function drawCargoShip(drone) {
   ctx.beginPath();
   ctx.arc(20, 0, 5, 0, Math.PI * 2);
   ctx.fill();
+  if (fleeing) {
+    ctx.fillStyle = "#ffd166";
+    ctx.shadowColor = "#ffd166";
+    ctx.shadowBlur = 14;
+    ctx.beginPath();
+    ctx.ellipse(-32, -7, 7 + fleePulse * 3, 3, 0, 0, Math.PI * 2);
+    ctx.ellipse(-32, 7, 7 + fleePulse * 3, 3, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
   ctx.restore();
 
   drawDefenseMeters(drone, drone.x, drone.y + 28, 58);
@@ -5440,7 +5519,14 @@ function drawBoss() {
   if (!boss) return;
   ctx.save();
   ctx.translate(boss.x, boss.y);
-  ctx.fillStyle = boss.flash > 0 ? "#edf7f5" : "#2f3038";
+  const flash = boss.flash > 0;
+  const hullGradient = ctx.createLinearGradient(0, -86, 0, 92);
+  hullGradient.addColorStop(0, flash ? "#edf7f5" : "#51545f");
+  hullGradient.addColorStop(0.42, flash ? "#edf7f5" : "#2f3038");
+  hullGradient.addColorStop(1, flash ? "#edf7f5" : "#161b22");
+  ctx.shadowColor = flash ? "#edf7f5" : "#ff5b74";
+  ctx.shadowBlur = flash ? 18 : 8;
+  ctx.fillStyle = hullGradient;
   ctx.strokeStyle = "#071014";
   ctx.lineWidth = 5;
   ctx.beginPath();
@@ -5454,26 +5540,124 @@ function drawBoss() {
   ctx.closePath();
   ctx.fill();
   ctx.stroke();
+  ctx.shadowBlur = 0;
 
-  ctx.fillStyle = "#ff5b74";
+  ctx.fillStyle = "#202832";
+  ctx.strokeStyle = "#071014";
+  ctx.lineWidth = 3;
+  [
+    [-54, -40, -18, 82],
+    [54, -40, 18, 82],
+  ].forEach(([x, y, lean, h]) => {
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + lean, y + h * 0.38);
+    ctx.lineTo(x + lean * 0.45, y + h);
+    ctx.lineTo(x - lean * 0.45, y + h * 0.76);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  });
+
+  ctx.strokeStyle = "#596773";
+  ctx.lineWidth = 2;
+  ctx.globalAlpha = 0.72;
+  [-1, 1].forEach((side) => {
+    ctx.beginPath();
+    ctx.moveTo(side * 18, -58);
+    ctx.lineTo(side * 52, -30);
+    ctx.lineTo(side * 64, 38);
+    ctx.lineTo(side * 28, 72);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(side * 34, -18);
+    ctx.lineTo(side * 74, 12);
+    ctx.stroke();
+  });
+  ctx.globalAlpha = 1;
+
+  ctx.fillStyle = "#111820";
+  ctx.strokeStyle = "#6df6d5";
+  ctx.lineWidth = 1.5;
+  ctx.globalAlpha = 0.68;
+  for (let i = -2; i <= 2; i += 1) {
+    ctx.beginPath();
+    ctx.rect(i * 14 - 3, -57, 6, 24);
+    ctx.fill();
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+
+  const corePulse = 0.5 + Math.sin(elapsed * 5.5) * 0.5;
+  const coreGradient = ctx.createRadialGradient(0, 8, 4, 0, 10, 56);
+  coreGradient.addColorStop(0, flash ? "#edf7f5" : "#ffd166");
+  coreGradient.addColorStop(0.34, "#ff5b74");
+  coreGradient.addColorStop(1, "#551c2a");
+  ctx.shadowColor = "#ff5b74";
+  ctx.shadowBlur = 16 + corePulse * 10;
+  ctx.fillStyle = coreGradient;
   ctx.beginPath();
   ctx.ellipse(0, 12, 38, 52, 0, 0, Math.PI * 2);
   ctx.fill();
   ctx.stroke();
+  ctx.shadowBlur = 0;
+
+  ctx.strokeStyle = "#ffd166";
+  ctx.lineWidth = 2;
+  ctx.globalAlpha = 0.55 + corePulse * 0.25;
+  ctx.beginPath();
+  ctx.ellipse(0, 12, 24, 35, 0, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(0, -37);
+  ctx.lineTo(0, 66);
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+
+  ctx.fillStyle = "#ff8c42";
+  ctx.shadowColor = "#ff8c42";
+  ctx.shadowBlur = 12;
+  [-28, 0, 28].forEach((x) => {
+    ctx.beginPath();
+    ctx.ellipse(x, 84, 7, 13 + corePulse * 5, 0, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  ctx.shadowBlur = 0;
 
   boss.parts.forEach((part) => {
     ctx.save();
     ctx.translate(part.offsetX, part.offsetY);
+    const charge = part.alive ? clamp(1 - (part.fireTimer || 0) / 0.42, 0, 1) : 0;
     ctx.globalAlpha = part.alive ? 1 : 0.28;
-    ctx.fillStyle = !part.alive ? "#33414a" : part.flash > 0 ? "#edf7f5" : "#ffd166";
+    ctx.shadowColor = charge > 0 ? "#ffd166" : "transparent";
+    ctx.shadowBlur = charge * 16;
+    ctx.fillStyle = !part.alive ? "#33414a" : part.flash > 0 ? "#edf7f5" : "#414b54";
     ctx.strokeStyle = "#071014";
     ctx.lineWidth = 4;
     ctx.beginPath();
-    ctx.rect(-18, -15, 36, 30);
+    ctx.rect(-21, -17, 42, 34);
     ctx.fill();
     ctx.stroke();
-    ctx.fillStyle = "#ff8c42";
-    ctx.fillRect(-6, 12, 12, 22);
+    ctx.fillStyle = part.alive ? "#ffd166" : "#1d252c";
+    ctx.fillRect(-14, -10, 28, 8);
+    ctx.fillStyle = part.alive ? "#ff8c42" : "#222b33";
+    ctx.fillRect(-8, 10, 16, 28);
+    ctx.fillStyle = part.alive ? "#071014" : "#13191f";
+    ctx.fillRect(-4, 14, 8, 22);
+    ctx.fillStyle = part.alive ? `rgba(255, 209, 102, ${0.22 + charge * 0.64})` : "rgba(7, 16, 20, 0.4)";
+    ctx.beginPath();
+    ctx.arc(0, 0, 10 + charge * 3, 0, Math.PI * 2);
+    ctx.fill();
+    if (!part.alive) {
+      ctx.strokeStyle = "#ff5b74";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(-13, -7);
+      ctx.lineTo(10, 11);
+      ctx.moveTo(8, -10);
+      ctx.lineTo(-5, 15);
+      ctx.stroke();
+    }
     ctx.restore();
   });
   ctx.restore();
@@ -5482,13 +5666,14 @@ function drawBoss() {
     if (!part.alive) return;
     drawBar(boss.x + part.offsetX - 22, boss.y + part.offsetY + 28, 44, 4, part.hp, part.maxHp, "#ffd166");
   });
-  drawBar(WIDTH / 2 - 150, 18, 300, 9, boss.hp, boss.maxHp, bossCannonsAlive() ? "#ff8c42" : "#ff5b74");
-  drawArmorPips(WIDTH / 2, 31, boss.armor || 0, boss.maxArmor || 0, boss.armorFlash || 0);
+  const bossHudY = 54;
+  drawBar(WIDTH / 2 - 150, bossHudY + 12, 300, 9, boss.hp, boss.maxHp, bossCannonsAlive() ? "#ff8c42" : "#ff5b74");
+  drawArmorPips(WIDTH / 2, bossHudY + 25, boss.armor || 0, boss.maxArmor || 0, boss.armorFlash || 0);
   ctx.save();
   ctx.fillStyle = "#edf7f5";
   ctx.font = "800 13px system-ui, sans-serif";
   ctx.textAlign = "center";
-  ctx.fillText(bossCannonsAlive() ? "CANNON WARDEN - BREAK CANNONS" : "CANNON WARDEN - TORSO EXPOSED", WIDTH / 2, 13);
+  ctx.fillText(bossCannonsAlive() ? "CANNON WARDEN - BREAK CANNONS" : "CANNON WARDEN - TORSO EXPOSED", WIDTH / 2, bossHudY + 7);
   ctx.restore();
 }
 
@@ -6707,6 +6892,7 @@ canvas.addEventListener("contextmenu", (event) => {
 startButton.addEventListener("click", resetGame);
 restartButton.addEventListener("click", resetGame);
 resumeButton.addEventListener("click", closePauseMenu);
+pauseRestartButton.addEventListener("click", resetGame);
 pauseMenuTabs.addEventListener("click", (event) => {
   const button = event.target.closest("button[data-menu]");
   if (!button) return;
