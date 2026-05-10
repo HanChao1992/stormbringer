@@ -645,6 +645,14 @@ h1 {
   text-align: right;
 }
 
+.play-streak-hud strong em {
+  color: #ffd166;
+  font-size: 0.72rem;
+  font-style: normal;
+  font-weight: 950;
+  margin-left: 3px;
+}
+
 .streak-meter {
   position: relative;
   width: 100%;

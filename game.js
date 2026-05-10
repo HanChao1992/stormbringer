@@ -198,6 +198,7 @@ const inventorySlotCount = () => (currentStreakLevel() >= 5 ? 4 : currentStreakL
 const currentWaveTheme = () => WAVE_THEMES[(wave - 1) % WAVE_THEMES.length];
 const hasSStreak = () => currentStreakLevel() >= STREAK_LAYERS.length;
 const minimumEnergy = () => (hasSStreak() ? 1 : 0);
+const scoreMultiplier = () => (hasSStreak() ? 1.3 : currentStreakLevel() >= 4 ? 1.2 : 1);
 
 function splitterStats(tier = "L") {
   if (tier === "S") return { tier: "S", next: null, radius: 12, hp: 1.6, speed: 130, cooldown: [1.45, 2.05], reward: 95, color: "#ff5b74" };
@@ -312,6 +313,17 @@ function recordKill(type) {
   runStats.kills[key] = (runStats.kills[key] || 0) + 1;
 }
 
+function awardScore(base, x, y, color = "#ffd166") {
+  const multiplier = scoreMultiplier();
+  const amount = Math.round(base * multiplier);
+  score += amount;
+  const suffix = multiplier > 1 ? ` x${multiplier.toFixed(1).replace(".0", "")}` : "";
+  if (Number.isFinite(x) && Number.isFinite(y)) {
+    addFloatingText(x, y, `+${amount}${suffix}`, color);
+  }
+  return amount;
+}
+
 function addStreakCharge(amount, x = player ? player.x : WIDTH / 2, y = player ? player.y : HEIGHT / 2, canRankUp = false) {
   const before = currentStreakLevel();
   const beforeSlots = inventorySlotCount();
@@ -363,7 +375,7 @@ function registerStreakKill(type, x, y) {
   refreshStreakDecay();
   const level = currentStreakLevel();
   if (level > 0) {
-    score += level * 20;
+    awardScore(level * 20, x, y - 18, currentStreakLayer()?.color || "#ffd166");
   }
 }
 
@@ -1061,7 +1073,9 @@ function updateHud() {
   }
   if (scoreText) scoreText.textContent = Math.round(score).toLocaleString();
   const layer = currentStreakLayer();
-  streakText.innerHTML = `<span>Streak</span><b>${layer ? layer.grade : "-"}</b>`;
+  const multiplier = scoreMultiplier();
+  const multiplierLabel = multiplier > 1 ? ` <em>x${multiplier.toFixed(1).replace(".0", "")}</em>` : "";
+  streakText.innerHTML = `<span>Streak</span><b>${layer ? layer.grade : "-"}${multiplierLabel}</b>`;
   streakText.style.color = layer ? layer.color : "#edf7f5";
   streakText.style.opacity = layer ? 1 : 0.55;
   streakFill.style.width = `${currentStreakProgress() * 100}%`;
@@ -3138,8 +3152,7 @@ function destroyDrone(drone, grantCharge = true) {
   const toughness = Math.max(0, drone.maxHp - 3);
   const energyChance = clamp(0.34 + toughness * 0.055 + (drone.type === "ufo" ? 0.08 : drone.type === "jet" ? 0.06 : 0), 0.34, 0.78);
   const powerupChance = clamp(0.12 + toughness * 0.018 + (drone.type === "ufo" ? 0.04 : drone.type === "jet" ? 0.03 : 0), 0.12, 0.27);
-  score += reward;
-  addFloatingText(drone.x, drone.y - 18, `+${reward}`, "#ffd166");
+  awardScore(reward, drone.x, drone.y - 18, "#ffd166");
   if (drone.type === "splitter") {
     spawnSplitterChildren(drone);
   }
@@ -3192,9 +3205,9 @@ function damageBossTarget(target, amount) {
     if (target.part.hp <= 0) {
       target.part.alive = false;
       target.part.hp = 0;
-      score += 600;
       recordKill("bossCannon");
       registerStreakKill("bossCannon", target.x, target.y);
+      awardScore(600, target.x, target.y - 34, "#ffd166");
       addFloatingText(target.x, target.y - 18, "CANNON DOWN", "#ffd166");
       addBossCannonDeath(target.x, target.y);
       bullets = bullets.filter((bullet) => {
@@ -3228,9 +3241,9 @@ function damageBossTarget(target, amount) {
     if (boss.hp <= 0 && !bossCannonsAlive()) {
       const bossX = boss.x;
       const bossY = boss.y;
-      score += 2600;
       recordKill("boss");
       registerStreakKill("boss", bossX, bossY);
+      awardScore(2600, bossX, bossY - 76, "#ffd166");
       addFloatingText(bossX, bossY - 58, "BOSS DOWN", "#ff5b74");
       addBossTorsoDeath(bossX, bossY);
       boss = null;
