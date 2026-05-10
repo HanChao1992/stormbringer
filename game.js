@@ -3082,7 +3082,7 @@ function damageDrone(drone, amount, kind = "normal", impactAngle = -Math.PI / 2)
     if (drone.type === "cargo" && armorBefore > 0 && (drone.armor || 0) <= 0 && !drone.fleeing) {
       drone.fleeing = true;
       drone.fleeFlash = 0.75;
-      drone.escapeDir = drone.x < WIDTH / 2 ? -1 : 1;
+      drone.escapeDir = (drone.vx || 0) < 0 ? -1 : 1;
       drone.vx = drone.escapeDir * 178;
       drone.vy = Math.max(drone.vy || 0, 18);
       drone.targetY = drone.y;
