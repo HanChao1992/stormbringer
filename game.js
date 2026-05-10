@@ -1073,9 +1073,7 @@ function updateHud() {
   }
   if (scoreText) scoreText.textContent = Math.round(score).toLocaleString();
   const layer = currentStreakLayer();
-  const multiplier = scoreMultiplier();
-  const multiplierLabel = multiplier > 1 ? ` <em>x${multiplier.toFixed(1).replace(".0", "")}</em>` : "";
-  streakText.innerHTML = `<span>Streak</span><b>${layer ? layer.grade : "-"}${multiplierLabel}</b>`;
+  streakText.innerHTML = `<span>Streak</span><b>${layer ? layer.grade : "-"}</b>`;
   streakText.style.color = layer ? layer.color : "#edf7f5";
   streakText.style.opacity = layer ? 1 : 0.55;
   streakFill.style.width = `${currentStreakProgress() * 100}%`;
