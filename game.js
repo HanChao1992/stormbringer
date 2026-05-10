@@ -4875,6 +4875,8 @@ function drawPowerupInventory() {
 
 function drawTopScore() {
   const value = Math.round(score).toLocaleString();
+  const multiplier = scoreMultiplier();
+  const multiplierLabel = multiplier > 1 ? `x${multiplier.toFixed(1).replace(".0", "")}` : "";
   ctx.save();
   ctx.translate(WIDTH / 2, 24);
   ctx.fillStyle = "rgba(7, 16, 20, 0.48)";
@@ -4895,7 +4897,16 @@ function drawTopScore() {
   ctx.shadowColor = "#6df6d5";
   ctx.shadowBlur = 8;
   ctx.font = "900 17px ui-monospace, Consolas, monospace";
-  ctx.fillText(value, 0, 8);
+  if (multiplierLabel) {
+    const scoreWidth = ctx.measureText(value).width;
+    ctx.fillText(value, -9, 8);
+    ctx.shadowBlur = 5;
+    ctx.fillStyle = "#ffd166";
+    ctx.font = "900 9px ui-monospace, Consolas, monospace";
+    ctx.fillText(multiplierLabel, scoreWidth / 2 + 7, 9);
+  } else {
+    ctx.fillText(value, 0, 8);
+  }
   ctx.restore();
 }
 
