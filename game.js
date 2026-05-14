@@ -15,6 +15,7 @@ const healthText = document.getElementById("health");
 const scoreText = document.getElementById("score");
 const streakText = document.getElementById("streak");
 const streakFill = document.getElementById("streakFill");
+const playStreakHud = document.querySelector(".play-streak-hud");
 const bestScoreText = document.getElementById("bestScore");
 const lastScoreText = document.getElementById("lastScore");
 const titleBestScoreText = document.getElementById("titleBestScore");
@@ -67,6 +68,7 @@ let supportPathLanes = [];
 let ultimateCue = null;
 let circleUltimate = null;
 let playerDeathSequence = null;
+let bossDefeatSequence = null;
 let score = 0;
 let streakCharge = 0;
 let streakDecayDelay = 0;
@@ -131,8 +133,8 @@ const FIGHTER_INITIAL_FIRE_DELAY = [0.55, 1.25];
 const FIGHTER_FIRE_DELAY = [1.32, 2.12];
 const FRENZIED_FIGHTER_FIRE_DELAY = [0.82, 1.22];
 const FORMATION_SPAWN_DELAY = [3.4, 5.1];
-const MINEFIELD_SPAWN_DELAY = [5.2, 8.0];
-const MINE_MAX_ACTIVE = 18;
+const MINEFIELD_SPAWN_DELAY = [6.4, 9.2];
+const MINE_MAX_ACTIVE = 14;
 const MINE_BLAST_RADIUS = 116;
 const MINE_BLAST_DAMAGE = 3.5;
 const PLAYER_MOVE_SPEED = 500;
@@ -195,13 +197,14 @@ const WAVE_PACE_PRESETS = {
 };
 const ACTIVE_WAVE_PACE = WAVE_PACE_PRESETS.staged;
 const isWaveUnlocked = (type) => wave >= (ACTIVE_WAVE_PACE[type] || 1);
+const PRE_BOSS_THEME = { key: "formation", label: "Final Approach", color: "#ffd166" };
+const HIDDEN_POWERUPS = new Set(["laser"]);
 const debugKeyEntries = [
   { mark: "`", title: "Debug Overlay", text: "Show or hide live run stats.", tip: "Use this when tuning waves, drops, bullets, and boss state.", color: "#6df6d5" },
   { mark: "B", title: "Start Boss", text: "Immediately brings in the first boss if no boss is active.", tip: "Bosses normally arrive through the wave schedule.", color: "#ff5b74" },
   { mark: "M", title: "Planet Pack", text: "Summons a named planet with nearby fighters for aura testing.", tip: "Enemies and the player fire faster inside the gold frenzy aura.", color: "#ffd166" },
   { mark: "S", title: "S Rank", text: "Instantly fills the streak system to S rank.", tip: "Useful for testing weapon overdrives and high-rank energy flow.", color: "#ff5b74" },
   { mark: "1", title: "Shotgun Drop", text: "Spawns the shotgun main weapon powerup near the player.", tip: "Main weapon slot.", color: "#ffd166" },
-  { mark: "2", title: "Laser Drop", text: "Spawns the laser main weapon powerup near the player.", tip: "Main weapon slot.", color: "#2fd46f" },
   { mark: "3", title: "Missile Drop", text: "Spawns the missile sub weapon powerup near the player.", tip: "Sub weapon slot.", color: "#8a7dff" },
   { mark: "4", title: "Machine Gun Drop", text: "Spawns the machine gun sub weapon powerup near the player.", tip: "Short range bullet-clearing weapon.", color: "#ff5b74" },
   { mark: "E", title: "Fill Energy", text: "Fills the ultimate energy units.", tip: "Triggers remain tied to normal energy logic.", color: "#2667ff" },
@@ -218,8 +221,10 @@ const currentStreakProgress = () => {
   return clamp((streakCharge - (level - 1) * STREAK_CHARGE_PER_LAYER) / STREAK_CHARGE_PER_LAYER, 0, 1);
 };
 const currentStreakDecayRate = () => STREAK_DECAY_BY_LEVEL[currentStreakLevel()] || 0;
+const isPowerupHidden = (type) => HIDDEN_POWERUPS.has(type);
 const inventorySlotCount = () => (currentStreakLevel() >= 5 ? 4 : currentStreakLevel() >= 4 ? 3 : currentStreakLevel() >= 3 ? 2 : 1);
-const currentWaveTheme = () => WAVE_THEMES[(wave - 1) % WAVE_THEMES.length];
+const isPreBossReliefWave = () => wave === ACTIVE_WAVE_PACE.boss - 1;
+const currentWaveTheme = () => (isPreBossReliefWave() ? PRE_BOSS_THEME : WAVE_THEMES[(wave - 1) % WAVE_THEMES.length]);
 const hasSStreak = () => currentStreakLevel() >= STREAK_LAYERS.length;
 const minimumEnergy = () => (hasSStreak() ? 1 : 0);
 const scoreMultiplier = () => (hasSStreak() ? 1.3 : currentStreakLevel() >= 4 ? 1.2 : 1);
@@ -783,6 +788,17 @@ const audio = {
     const pitch = this.variation(0.07);
     this.tone({ type: "triangle", frequency: 260 * pitch, endFrequency: 720 * this.variation(0.08), duration: 0.18 * this.variation(0.12), volume: 0.16 * this.variation(0.14) });
   },
+  missileImpact(layer = "health") {
+    if (!this.throttle(`missile-impact-${layer}`, 0.085)) return;
+    const pitch = this.variation(0.045);
+    const shieldSpark = layer === "shield" ? 1.12 : 1;
+    const armorDull = layer === "armor" ? 0.86 : 1;
+    this.noise({ duration: 0.26 * this.variation(0.1), volume: 0.36 * this.variation(0.12), filterFrequency: 260 * armorDull });
+    this.tone({ type: "sine", frequency: 72 * pitch * armorDull, endFrequency: 26 * pitch, duration: 0.34 * this.variation(0.08), volume: 0.32 * this.variation(0.1) });
+    this.tone({ type: "triangle", frequency: 118 * pitch, endFrequency: 44 * pitch, duration: 0.22 * this.variation(0.1), volume: 0.18 * this.variation(0.12), when: 0.018 });
+    this.noise({ duration: 0.052, volume: 0.16 * shieldSpark, filterFrequency: layer === "shield" ? 3600 : 2200, when: 0.018 });
+    this.tone({ type: "square", frequency: 420 * pitch * shieldSpark, endFrequency: 92 * pitch, duration: 0.075 * this.variation(0.12), volume: 0.085 * this.variation(0.14), when: 0.026 });
+  },
   laser() {
     if (!this.throttle("laser", 0.32)) return;
     const pitch = this.variation(0.025);
@@ -1034,6 +1050,8 @@ function resetGame() {
   ultimateCue = null;
   circleUltimate = null;
   playerDeathSequence = null;
+  bossDefeatSequence = null;
+  if (playStreakHud) playStreakHud.classList.remove("hidden");
   score = 0;
   streakCharge = 0;
   streakDecayDelay = 0;
@@ -1108,6 +1126,9 @@ function addMuzzleBlast(x, y, options = {}) {
 }
 
 function updateHud() {
+  if (playStreakHud) {
+    playStreakHud.classList.toggle("hidden", state === "gameover" || state === "menu");
+  }
   const hits = Math.max(0, player.hits);
   if (healthText) {
     healthText.innerHTML = "";
@@ -1540,6 +1561,37 @@ function startPlayerDeathSequence() {
   audio.playerDeath();
 }
 
+function startBossDefeatSequence(x, y) {
+  if (bossDefeatSequence) return;
+  state = "victory";
+  audio.setMusicMode("normal");
+  pointer.leftDown = false;
+  pointer.rightDown = false;
+  magnetWasDown = false;
+  magnetHoldTime = 0;
+  hitStop = 0;
+  bullets = [];
+  missiles = [];
+  missileTrails = [];
+  drones = drones.filter((drone) => {
+    if (!drone.bossEscort) return true;
+    addDeathAnimation(drone);
+    return false;
+  });
+  bossDefeatSequence = {
+    x,
+    y,
+    timer: 2.05,
+    maxTimer: 2.05,
+    burstTimer: 0,
+  };
+  addFloatingText(x, y - 70, "WARDEN DESTROYED", "#ffd166");
+  addRingBurst(x, y, "#ffd166", 52, 22, 520, 5.2);
+  addRingBurst(x, y, "#ff5b74", 36, 10, 440, 4.6);
+  addRingBurst(x, y, "#edf7f5", 18, 4, 320, 3.6);
+  shake = Math.max(shake, 0.86);
+}
+
 function addDeathAnimation(drone) {
   const deathColor = drone.type === "ufo" ? "#8a7dff" : drone.type === "cargo" ? "#ffd166" : drone.type === "jet" ? "#edf7f5" : drone.type === "mothership" ? "#6df6d5" : "#ff8c42";
   addRingBurst(drone.x, drone.y, deathColor, drone.type === "mothership" ? 26 : 12, drone.r * 0.25, drone.type === "mothership" ? 420 : 260, drone.type === "mothership" ? 4.5 : 2.8);
@@ -1774,14 +1826,15 @@ function spawnMothershipShot(x, y, angle, index, count) {
 }
 
 function spawnBossMissile(x, y, angle, ownerId = null) {
-  addMuzzleBlast(x, y, { angle, color: "#ffd166", coreColor: "#ff5b74", type: "danger", size: 1.15, life: 0.24 });
+  addMuzzleBlast(x, y, { angle, color: "#ffd166", coreColor: "#ff5b74", type: "danger", size: 1.45, life: 0.3 });
   bullets.push({
     x,
     y,
     vx: Math.cos(angle) * 175,
     vy: Math.sin(angle) * 175,
-    r: 7,
+    r: 7.5,
     color: "#ffd166",
+    coreColor: "#ff5b74",
     angle,
     speed: 175,
     homing: true,
@@ -1913,6 +1966,9 @@ function spawnDebugMothershipPack() {
 function spawnFirstBoss() {
   audio.mothershipAlert();
   audio.setMusicMode("boss");
+  bullets = [];
+  missiles = [];
+  missileTrails = [];
   drones.forEach((drone) => {
     drone.exiting = true;
     drone.cooldown = 99;
@@ -1930,8 +1986,8 @@ function spawnFirstBoss() {
     maxArmor: 20,
     armorFlash: 0,
     flash: 0,
-    fireTimer: 1.4,
-    reinforcementTimer: 5.2,
+    fireTimer: 1.8,
+    reinforcementTimer: 2.8,
     wobble: 0,
     parts: [
       { id: "leftTop", label: "CANNON", offsetX: -76, offsetY: -20, r: 18, hp: 42, maxHp: 42, alive: true, flash: 0, fireTimer: 1.15 },
@@ -1941,7 +1997,10 @@ function spawnFirstBoss() {
     ],
   };
   addFloatingText(WIDTH / 2, 92, "BOSS: CANNON WARDEN", "#ff5b74");
-  shake = Math.max(shake, 0.28);
+  addRingBurst(WIDTH / 2, 122, "#ff5b74", 38, 24, 360, 4.2);
+  addRingBurst(WIDTH / 2, 122, "#ffd166", 20, 6, 260, 3.2);
+  hitStop = Math.max(hitStop, 0.11);
+  shake = Math.max(shake, 0.48);
 }
 
 function spawnDrone() {
@@ -1994,34 +2053,44 @@ function spawnBossReinforcements() {
   if (!boss) return;
   const maxHp = fighterHp(3 + Math.floor(wave / 4));
   const slots = [
-    { x: -52, y: 54, vx: -78, targetX: -96 },
-    { x: -22, y: 70, vx: -34, targetX: -42 },
-    { x: 22, y: 70, vx: 34, targetX: 42 },
-    { x: 52, y: 54, vx: 78, targetX: 96 },
+    { id: "innerLeft", x: -52, y: 72 },
+    { id: "innerRight", x: 52, y: 72 },
+    { id: "outerLeft", x: -96, y: 38 },
+    { id: "outerRight", x: 96, y: 38 },
   ];
+  let spawned = 0;
   slots.forEach((slot, index) => {
+    if (drones.some((drone) => drone.bossEscort && drone.escortSlot === slot.id && drone.hp > 0)) return;
     const x = clamp(boss.x + slot.x, 28, WIDTH - 28);
     const y = boss.y + slot.y;
     drones.push({
       x,
       y,
-      vx: slot.vx,
-      targetY: y + 86 + index * 7,
+      vx: 0,
+      targetX: x,
+      targetY: y,
       r: 16,
       type: "ship",
       hp: maxHp,
       maxHp,
-      cooldown: rand(1.35, 2.2),
+      cooldown: rand(0.8, 1.55),
       wobble: rand(0, Math.PI * 2),
       flash: 0,
       enteredScreen: true,
       bossEscort: true,
+      escortSlot: slot.id,
+      escortOffsetX: slot.x,
+      escortOffsetY: slot.y,
+      escortPhase: index * 0.9 + rand(0, 0.4),
     });
+    spawned += 1;
     addMuzzleBlast(x, y, { angle: Math.PI / 2, color: "#ff8c42", coreColor: "#ffd166", type: "danger", size: 0.72, life: 0.12 });
   });
+  if (!spawned) return;
   addFloatingText(boss.x, boss.y + 94, "ESCORTS DEPLOYED", "#ff8c42");
   addRingBurst(boss.x, boss.y + 74, "#ff8c42", 18, 14, 210, 2.8);
-  shake = Math.max(shake, 0.08);
+  hitStop = Math.max(hitStop, 0.06);
+  shake = Math.max(shake, 0.14);
 }
 
 function spawnFighterFormation(themeKey = currentWaveTheme().key) {
@@ -2128,12 +2197,12 @@ function spawnMinefield() {
   const laneX = clamp(player ? player.x : WIDTH / 2, WIDTH * 0.22, WIDTH * 0.78);
 
   if (pattern === 0) {
-    for (let i = -2; i <= 2; i += 1) {
+    for (let i = -1.5; i <= 1.5; i += 1) {
       spawnMine(laneX + i * 58, -58 - Math.abs(i) * 18, { targetX: laneX + i * 42, targetY: rand(96, HEIGHT * 0.38) });
     }
   } else if (pattern === 1) {
-    for (let i = 0; i < 7; i += 1) {
-      const angle = -Math.PI * 0.85 + i * (Math.PI * 0.7 / 6);
+    for (let i = 0; i < 5; i += 1) {
+      const angle = -Math.PI * 0.82 + i * (Math.PI * 0.64 / 4);
       spawnMine(laneX + Math.cos(angle) * 148, -52 + Math.sin(angle) * 52, {
         targetX: laneX + Math.cos(angle) * 118,
         targetY: rand(88, HEIGHT * 0.42),
@@ -2143,7 +2212,7 @@ function spawnMinefield() {
     const columns = [-1, 0, 1];
     for (let row = 0; row < 3; row += 1) {
       columns.forEach((column) => {
-        if (row === 1 && column === 0) return;
+        if ((row === 1 && column === 0) || (row === 2 && column > 0)) return;
         spawnMine(laneX + column * 76 + (row % 2 ? 24 : 0), -58 - row * 54, {
           targetX: laneX + column * 58 + (row % 2 ? 18 : 0),
           targetY: rand(92 + row * 24, HEIGHT * 0.48),
@@ -2303,7 +2372,8 @@ function spawnSplitterChildren(drone) {
 }
 
 function currentSpawnDelay() {
-  return Math.max(0.48, 1.08 - wave * 0.062);
+  const relief = isPreBossReliefWave() ? 0.18 : 0;
+  return Math.max(0.48, 1.08 - wave * 0.062 + relief);
 }
 
 function startBreather(duration = 2.4) {
@@ -2355,13 +2425,13 @@ function executePendingThreat() {
 
 function randomPowerupType() {
   const roll = Math.random();
-  if (roll < 0.28) return "shotgun";
-  if (roll < 0.54) return "laser";
-  if (roll < 0.78) return "missiles";
+  if (roll < 0.36) return "shotgun";
+  if (roll < 0.68) return "missiles";
   return "machinegun";
 }
 
 function spawnPowerup(x, y, type = randomPowerupType()) {
+  if (isPowerupHidden(type)) type = randomPowerupType();
   const safe = keepLootInPlay(x, y, rand(-58, 58), rand(-24, 58), 44);
   const info = powerupInfo[type] || powerupInfo.shotgun;
   addLootReleaseFlash(safe.x, safe.y, info.color, true);
@@ -2405,6 +2475,7 @@ function scatterInventoryPowerup(type, index = 0, total = 1) {
 
 function spawnDebugPowerup(type) {
   if (!player) return;
+  if (isPowerupHidden(type)) return;
   const x = clamp(player.x + rand(-28, 28), 28, WIDTH - 28);
   const y = clamp(player.y - 54 + rand(-16, 16), 28, HEIGHT - 28);
   spawnPowerup(x, y, type);
@@ -2738,6 +2809,7 @@ function activateQueuedPowerup(slot) {
 }
 
 function collectPowerup(type) {
+  if (isPowerupHidden(type)) return false;
   const info = powerupInfo[type] || powerupInfo.shotgun;
   player.inventory ||= [];
   if (activeWeaponInSlot(info.slot)) {
@@ -3242,6 +3314,10 @@ function bossCannonsAlive() {
   return boss ? boss.parts.some((part) => part.alive) : false;
 }
 
+function bossCannonCount() {
+  return boss ? boss.parts.filter((part) => part.alive).length : 0;
+}
+
 function bossTargets() {
   if (!boss) return [];
   const targets = boss.parts
@@ -3255,6 +3331,23 @@ function bossTargets() {
     }));
   targets.push({ kind: "torso", x: boss.x, y: boss.y + 12, r: boss.r });
   return targets;
+}
+
+function damageBossArmor(amount = 1) {
+  if (!boss || boss.armor <= 0) return false;
+  const before = boss.armor;
+  boss.armor = Math.max(0, boss.armor - amount);
+  boss.armorFlash = 0.22;
+  boss.flash = 0.08;
+  const lost = before - boss.armor;
+  for (let i = 0; i < lost; i += 1) {
+    const angle = rand(-Math.PI * 0.82, -Math.PI * 0.18) + (i / Math.max(1, lost)) * Math.PI * 1.2;
+    const x = boss.x + Math.cos(angle) * rand(26, 58);
+    const y = boss.y + 12 + Math.sin(angle) * rand(28, 48);
+    addParticles(x, y, "#ffd166", 5, 180);
+    addRingBurst(x, y, "#ffd166", 6, 2, 130, 1.8);
+  }
+  return true;
 }
 
 function damageBossTarget(target, amount) {
@@ -3279,7 +3372,8 @@ function damageBossTarget(target, amount) {
         return keep;
       });
       boss.armor = boss.maxArmor;
-      boss.armorFlash = 0.35;
+      boss.armorFlash = 0.78;
+      addRingBurst(boss.x, boss.y + 12, "#ffd166", 36, 12, 340, 3.8);
       addFloatingText(boss.x, boss.y - 74, "ARMOR REFRESH", "#ffd166");
       spawnPowerup(target.x, target.y);
       for (let i = 0; i < 3; i += 1) {
@@ -3290,10 +3384,15 @@ function damageBossTarget(target, amount) {
     return { hit: true, layer: "health", healthRatio: target.part.hp / target.part.maxHp };
   }
   if (target.kind === "torso") {
+    if (bossCannonsAlive()) {
+      if (!damageBossArmor(1)) {
+        boss.armorFlash = Math.max(boss.armorFlash || 0, 0.28);
+        boss.flash = Math.max(boss.flash || 0, 0.06);
+      }
+      return { hit: true, layer: "armor", healthRatio: boss.hp / boss.maxHp };
+    }
     if (boss.armor > 0) {
-      boss.armor = Math.max(0, boss.armor - 1);
-      boss.armorFlash = 0.18;
-      boss.flash = 0.08;
+      damageBossArmor(1);
       return { hit: true, layer: "armor", healthRatio: boss.hp / boss.maxHp };
     }
     boss.hp -= amount;
@@ -3308,7 +3407,7 @@ function damageBossTarget(target, amount) {
       addBossTorsoDeath(bossX, bossY);
       boss = null;
       shake = Math.max(shake, 0.48);
-      endGame("victory");
+      startBossDefeatSequence(bossX, bossY);
     } else if (boss.hp <= 0) {
       boss.hp = 1;
       addFloatingText(boss.x, boss.y - 48, "BREAK CANNONS", "#ffd166");
@@ -3326,7 +3425,11 @@ function hitBossWithProjectile(projectile, amount) {
       registerStreakHit(projectile.kind || "normal", projectile.x, projectile.y);
       const color = result.layer === "armor" || target.kind === "part" ? "#ffd166" : "#ff5b74";
       addParticles(projectile.x, projectile.y, color, projectile.kind === "shotgun" ? 10 : 6, 150);
-      audio.enemyHit(projectile.kind || "normal", result.healthRatio, result.layer);
+      if (projectile.kind === "missile") {
+        audio.missileImpact(result.layer);
+      } else {
+        audio.enemyHit(projectile.kind || "normal", result.healthRatio, result.layer);
+      }
       return true;
     }
   }
@@ -3466,6 +3569,9 @@ function updatePlayerLaser(dt) {
     if (beamHit.tipFactor > 0.72) {
       addRingBurst(beamHit.px, beamHit.py, "#edf7f5", 11, 3, 230, 2.6);
       addRingBurst(beamHit.px, beamHit.py, "#2fd46f", 7, 8, 190, 2);
+      if (!prism) {
+        addMuzzleBlast(beamHit.px, beamHit.py, { angle: beamHit.angle || angle, color: "#edf7f5", coreColor: "#2fd46f", type: "burst", size: 0.62, life: 0.08 });
+      }
       audio.laserTip(beamHit.tipFactor);
     }
     audio.enemyHit("laser", drone.hp / drone.maxHp, impactLayer(result));
@@ -3483,6 +3589,9 @@ function updatePlayerLaser(dt) {
       if (beamHit.tipFactor > 0.72) {
         addRingBurst(beamHit.px, beamHit.py, "#edf7f5", 11, 3, 230, 2.6);
         addRingBurst(beamHit.px, beamHit.py, "#2fd46f", 7, 8, 190, 2);
+        if (!prism) {
+          addMuzzleBlast(beamHit.px, beamHit.py, { angle: beamHit.angle || angle, color: "#edf7f5", coreColor: "#2fd46f", type: "burst", size: 0.62, life: 0.08 });
+        }
         audio.laserTip(beamHit.tipFactor);
       }
       hitSomething = true;
@@ -3733,7 +3842,7 @@ function updateEnemies(dt) {
     if (isDroneOnPlayerScreen(drone)) {
       drone.enteredScreen = true;
     }
-    if (!drone.exiting && drone.type !== "mothership" && drone.enteredScreen && drone.y - drone.r > HEIGHT + 6) {
+    if (!drone.exiting && !drone.bossEscort && drone.type !== "mothership" && drone.enteredScreen && drone.y - drone.r > HEIGHT + 6) {
       drone.exiting = true;
       drone.cooldown = 99;
       drone.vx = clamp(drone.vx || rand(-18, 18), -80, 80);
@@ -3764,13 +3873,30 @@ function updateEnemies(dt) {
     if (!drone.exiting && ENEMY_FORWARD_DRIFT[drone.type] && (drone.type !== "mine" || drone.mineState === "armed")) {
       const driftSpeed = drone.type === "cargo" && drone.fleeing ? 10 : ENEMY_FORWARD_DRIFT[drone.type];
       const drift = driftSpeed * dt * moveScale;
-      drone.y += drift;
-      drone.targetY = Math.min(HEIGHT + 90, (drone.targetY || drone.y) + drift);
+      if (!drone.bossEscort) {
+        drone.y += drift;
+        drone.targetY = Math.min(HEIGHT + 90, (drone.targetY || drone.y) + drift);
+      }
     }
     if (drone.exiting) {
       drone.x += drone.vx * dt;
       drone.y += (drone.vy || 96) * dt;
       drone.cooldown = 99;
+    } else if (drone.bossEscort) {
+      if (!boss) {
+        drone.exiting = true;
+        drone.vx = drone.x < WIDTH / 2 ? -90 : 90;
+        drone.vy = 118;
+        drone.cooldown = 99;
+      } else {
+        const holdX = clamp(boss.x + (drone.escortOffsetX || 0), 28, WIDTH - 28);
+        const holdY = boss.y + (drone.escortOffsetY || 0) + Math.sin(elapsed * 2.4 + (drone.escortPhase || 0)) * 5;
+        drone.x += (holdX - drone.x) * Math.min(1, dt * 6.5 * moveScale);
+        drone.y += (holdY - drone.y) * Math.min(1, dt * 6.5 * moveScale);
+        drone.vx = holdX - drone.x;
+        drone.targetX = holdX;
+        drone.targetY = holdY;
+      }
     } else if (drone.type === "mothership") {
       drone.y += MOTHERLAND_PASS_DRIFT * dt;
       drone.targetY = drone.y;
@@ -3958,6 +4084,7 @@ function updateEnemies(dt) {
   drones = drones.filter((drone) => {
     if (drone.hp <= 0) return false;
     if (drone.exiting) return drone.x > -110 && drone.x < WIDTH + 110 && drone.y > -100 && drone.y < HEIGHT + 140;
+    if (drone.bossEscort) return Boolean(boss);
     if (drone.type === "mothership") return drone.y < HEIGHT + drone.r + 80;
     return drone.x > -70 && drone.x < WIDTH + 70 && drone.y < HEIGHT + 110;
   });
@@ -3971,6 +4098,8 @@ function updateBoss(dt) {
   boss.x = clamp(boss.x, 120, WIDTH - 120);
   boss.flash = Math.max(0, boss.flash - dt);
   boss.armorFlash = Math.max(0, (boss.armorFlash || 0) - dt);
+  const aliveCannons = bossCannonCount();
+  const bossPhase = 4 - aliveCannons;
   boss.parts.forEach((part) => {
     part.flash = Math.max(0, (part.flash || 0) - dt);
     if (!part.alive || Math.abs(boss.y - boss.targetY) > 28) return;
@@ -3982,8 +4111,9 @@ function updateBoss(dt) {
       [-0.11, 0.11].forEach((spread) => {
         spawnBossMissile(x, y, baseAngle + spread, part.id);
       });
-      part.fireTimer = rand(2.45, 3.15);
-      part.flash = Math.max(part.flash || 0, 0.12);
+      const phasePressure = bossPhase * 0.22;
+      part.fireTimer = Math.max(1.85, rand(2.85, 3.55) - phasePressure);
+      part.flash = Math.max(part.flash || 0, 0.18);
     }
   });
 
@@ -3994,14 +4124,14 @@ function updateBoss(dt) {
       const angle = Math.PI / 2 + i * 0.13;
       spawnBullet(boss.x, originY, angle, 150 + wave * 5, 5, "#ff8c42");
     }
-    boss.fireTimer = rand(1.1, 1.45);
+    boss.fireTimer = Math.max(1.02, rand(1.55, 1.95) - bossPhase * 0.14);
   }
 
   if (Math.abs(boss.y - boss.targetY) <= 28) {
     boss.reinforcementTimer = Math.max(0, (boss.reinforcementTimer || 0) - dt);
     if (boss.reinforcementTimer <= 0) {
       spawnBossReinforcements();
-      boss.reinforcementTimer = rand(8.4, 11.2);
+      boss.reinforcementTimer = aliveCannons <= 2 ? rand(7.0, 9.2) : rand(10.8, 13.4);
     }
   }
 
@@ -4309,7 +4439,7 @@ function resolveCollisions() {
         shake = Math.max(shake, 0.075);
         applyMissileSplash(missile, drone);
         addParticles(missile.x, missile.y, result.shieldHit ? SHIELD_COLOR : "#ffd166", 18, 220);
-        audio.enemyHit("missile", drone.hp / drone.maxHp, impactLayer(result));
+        audio.missileImpact(impactLayer(result));
         if (drone.hp <= 0) {
           destroyDrone(drone);
         }
@@ -4372,7 +4502,9 @@ function resolveCollisions() {
 
 function endGame(outcome = "death") {
   playerDeathSequence = null;
+  bossDefeatSequence = null;
   state = "gameover";
+  if (playStreakHud) playStreakHud.classList.add("hidden");
   audio.musicMode = "normal";
   audio.stopMusic();
   pauseMenu.classList.add("hidden");
@@ -4639,7 +4771,40 @@ function updatePlayerDeathSequence(dt) {
   }
 }
 
+function updateBossDefeatSequence(dt) {
+  if (!bossDefeatSequence) return;
+  bossDefeatSequence.timer -= dt;
+  bossDefeatSequence.burstTimer -= dt;
+  const progress = 1 - clamp(bossDefeatSequence.timer / bossDefeatSequence.maxTimer, 0, 1);
+  shake = Math.max(shake, 0.5 * (1 - progress));
+  if (bossDefeatSequence.burstTimer <= 0 && bossDefeatSequence.timer > 0.38) {
+    bossDefeatSequence.burstTimer = rand(0.08, 0.16);
+    const x = bossDefeatSequence.x + rand(-72, 72);
+    const y = bossDefeatSequence.y + rand(-56, 72);
+    addRingBurst(x, y, Math.random() < 0.5 ? "#ffd166" : "#ff5b74", rand(12, 24), rand(4, 12), rand(260, 430), rand(2.8, 4.4));
+    addParticles(x, y, Math.random() < 0.5 ? "#ffd166" : "#edf7f5", 18, 320);
+  }
+  if (bossDefeatSequence.timer <= 0) {
+    endGame("victory");
+  }
+}
+
 function update(dt) {
+  if (state === "victory") {
+    elapsed += dt * 0.45;
+    shake = Math.max(0, shake - dt * 0.38);
+    updateBossDefeatSequence(dt);
+    updatePlayerDamageFeedback(dt);
+    updatePlayerHealFeedback(dt);
+    updateParticles(dt);
+    updateFloatingTexts(dt);
+    updateMuzzleBlasts(dt);
+    updateNukeEffects(dt);
+    updateMissileSplashEffects(dt);
+    updateCivilianShips(dt);
+    updateHud();
+    return;
+  }
   if (state === "dying") {
     elapsed += dt * 0.35;
     shake = Math.max(0, shake - dt * 0.45);
@@ -5697,6 +5862,69 @@ function drawMothership(drone) {
   ctx.restore();
 }
 
+function drawBossArmorPlates() {
+  if (!boss || !boss.maxArmor) return;
+  const maxArmor = boss.maxArmor || 0;
+  const activeArmor = boss.armor || 0;
+  const flash = clamp(boss.armorFlash || 0, 0, 1);
+  const rebuild = clamp(flash / 0.78, 0, 1);
+  const columns = 5;
+  const rows = Math.ceil(maxArmor / columns);
+  const plateW = 17;
+  const plateH = 10;
+  const gapX = 2.5;
+  const gapY = 3.5;
+  const startX = -((columns - 1) * (plateW + gapX)) / 2;
+  const startY = -17;
+
+  ctx.save();
+  ctx.globalCompositeOperation = "source-over";
+  for (let i = 0; i < maxArmor; i += 1) {
+    const row = Math.floor(i / columns);
+    const col = i % columns;
+    const centeredCol = col - (columns - 1) / 2;
+    const x = startX + col * (plateW + gapX);
+    const y = startY + row * (plateH + gapY);
+    const curve = Math.abs(centeredCol) * 2.4 + Math.sin(row * 1.7 + centeredCol) * 1.2;
+    const alive = i < activeArmor;
+    const restoreWave = activeArmor === maxArmor ? rebuild * (1 - row / rows) : 0;
+    ctx.save();
+    ctx.translate(x, y + curve);
+    ctx.rotate(centeredCol * 0.035);
+    ctx.globalAlpha = alive ? 0.9 : 0.16;
+    ctx.fillStyle = alive ? (flash > 0.08 ? "#edf7f5" : "#ffd166") : "rgba(255, 209, 102, 0.12)";
+    ctx.strokeStyle = alive ? "#071014" : "rgba(255, 209, 102, 0.42)";
+    ctx.shadowColor = "#ffd166";
+    ctx.shadowBlur = alive ? 5 + flash * 12 : 0;
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.rect(-plateW / 2, -plateH / 2 - restoreWave * 3, plateW, plateH);
+    ctx.fill();
+    ctx.stroke();
+    if (!alive) {
+      ctx.globalAlpha = 0.36;
+      ctx.strokeStyle = "#ff5b74";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(-plateW * 0.26, -plateH * 0.24);
+      ctx.lineTo(plateW * 0.22, plateH * 0.18);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+  if (flash > 0.08) {
+    ctx.globalAlpha = 0.18 + flash * 0.2;
+    ctx.strokeStyle = "#ffd166";
+    ctx.shadowColor = "#ffd166";
+    ctx.shadowBlur = 18;
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.ellipse(0, 12, 58 + flash * 9, 66 + flash * 9, 0, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 function drawBoss() {
   if (!boss) return;
   ctx.save();
@@ -5794,6 +6022,24 @@ function drawBoss() {
   ctx.moveTo(0, -37);
   ctx.lineTo(0, 66);
   ctx.stroke();
+  drawBossArmorPlates();
+  if (bossCannonsAlive()) {
+    const shieldPulse = 0.45 + Math.sin(elapsed * 8) * 0.3 + (boss.armorFlash || 0) * 0.8;
+    ctx.globalAlpha = 0.28 + shieldPulse * 0.22;
+    ctx.strokeStyle = "#ffd166";
+    ctx.shadowColor = "#ffd166";
+    ctx.shadowBlur = 12 + shieldPulse * 12;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.ellipse(0, 12, 47 + shieldPulse * 4, 61 + shieldPulse * 4, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.globalAlpha = 0.8;
+    ctx.font = "800 9px system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#ffd166";
+    ctx.fillText("LOCKED", 0, 75);
+    ctx.shadowBlur = 0;
+  }
   ctx.globalAlpha = 1;
 
   ctx.fillStyle = "#ff8c42";
@@ -5809,8 +6055,52 @@ function drawBoss() {
   boss.parts.forEach((part) => {
     ctx.save();
     ctx.translate(part.offsetX, part.offsetY);
-    const charge = part.alive ? clamp(1 - (part.fireTimer || 0) / 0.42, 0, 1) : 0;
+    const charge = part.alive ? clamp(1 - (part.fireTimer || 0) / 0.82, 0, 1) : 0;
+    const aimAngle = part.alive ? Math.atan2(player.y - (boss.y + part.offsetY), player.x - (boss.x + part.offsetX)) : Math.PI / 2;
     ctx.globalAlpha = part.alive ? 1 : 0.28;
+    if (part.alive) {
+      ctx.save();
+      ctx.rotate(aimAngle);
+      ctx.globalAlpha = 0.12 + charge * 0.72;
+      ctx.strokeStyle = charge > 0.55 ? "#ff5b74" : "#ffd166";
+      ctx.shadowColor = ctx.strokeStyle;
+      ctx.shadowBlur = charge * 18;
+      ctx.lineWidth = 1.5 + charge * 3;
+      ctx.setLineDash([9, 7]);
+      ctx.beginPath();
+      ctx.moveTo(13, 0);
+      ctx.lineTo(88 + charge * 34, 0);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 0.28 + charge * 0.52;
+      ctx.beginPath();
+      ctx.moveTo(18, 0);
+      ctx.lineTo(56, -9 - charge * 8);
+      ctx.lineTo(56, 9 + charge * 8);
+      ctx.closePath();
+      ctx.stroke();
+      ctx.restore();
+
+      ctx.save();
+      ctx.globalAlpha = 0.58 + charge * 0.32;
+      ctx.strokeStyle = "#ffd166";
+      ctx.lineWidth = 2;
+      const bracket = 27 + charge * 4;
+      [
+        [-bracket, -bracket, 9, 0],
+        [bracket, -bracket, -9, 0],
+        [-bracket, bracket, 9, 0],
+        [bracket, bracket, -9, 0],
+      ].forEach(([x, y, dx]) => {
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(x + dx, y);
+        ctx.moveTo(x, y);
+        ctx.lineTo(x, y + (y < 0 ? 9 : -9));
+        ctx.stroke();
+      });
+      ctx.restore();
+    }
     ctx.shadowColor = charge > 0 ? "#ffd166" : "transparent";
     ctx.shadowBlur = charge * 16;
     ctx.fillStyle = !part.alive ? "#33414a" : part.flash > 0 ? "#edf7f5" : "#414b54";
@@ -5820,12 +6110,19 @@ function drawBoss() {
     ctx.rect(-21, -17, 42, 34);
     ctx.fill();
     ctx.stroke();
+    ctx.save();
+    ctx.rotate(aimAngle - Math.PI / 2);
     ctx.fillStyle = part.alive ? "#ffd166" : "#1d252c";
     ctx.fillRect(-14, -10, 28, 8);
     ctx.fillStyle = part.alive ? "#ff8c42" : "#222b33";
-    ctx.fillRect(-8, 10, 16, 28);
+    ctx.fillRect(-8, -2, 16, 34);
     ctx.fillStyle = part.alive ? "#071014" : "#13191f";
-    ctx.fillRect(-4, 14, 8, 22);
+    ctx.fillRect(-4, 3, 8, 27);
+    ctx.fillStyle = part.alive ? "#ffd166" : "#202832";
+    ctx.beginPath();
+    ctx.arc(0, -2, 8 + charge * 2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
     ctx.fillStyle = part.alive ? `rgba(255, 209, 102, ${0.22 + charge * 0.64})` : "rgba(7, 16, 20, 0.4)";
     ctx.beginPath();
     ctx.arc(0, 0, 10 + charge * 3, 0, Math.PI * 2);
@@ -6512,6 +6809,34 @@ function drawPlayerDeathOverlay() {
   ctx.restore();
 }
 
+function drawBossDefeatOverlay() {
+  if (!bossDefeatSequence) return;
+  const progress = 1 - clamp(bossDefeatSequence.timer / bossDefeatSequence.maxTimer, 0, 1);
+  const flash = clamp((0.22 - Math.abs(progress - 0.32)) / 0.22, 0, 1);
+  ctx.save();
+  ctx.globalCompositeOperation = "screen";
+  ctx.globalAlpha = 0.08 + flash * 0.24;
+  ctx.fillStyle = "#ffd166";
+  ctx.fillRect(0, 0, WIDTH, HEIGHT);
+  ctx.globalAlpha = 0.42 * (1 - progress * 0.55);
+  ctx.strokeStyle = progress < 0.5 ? "#ffd166" : "#edf7f5";
+  ctx.shadowColor = "#ffd166";
+  ctx.shadowBlur = 28;
+  ctx.lineWidth = 8 + progress * 16;
+  ctx.beginPath();
+  ctx.arc(bossDefeatSequence.x, bossDefeatSequence.y, 44 + progress * 520, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.globalAlpha = clamp((progress - 0.36) / 0.34, 0, 0.92);
+  ctx.fillStyle = "#edf7f5";
+  ctx.font = "900 22px Inter, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("DEMO CLEAR", WIDTH / 2, HEIGHT / 2 - 14);
+  ctx.font = "700 13px Inter, sans-serif";
+  ctx.fillText("WARDEN SIGNAL DESTROYED", WIDTH / 2, HEIGHT / 2 + 18);
+  ctx.restore();
+}
+
 function drawMagnetField() {
   if (!pointer.rightDown || !player) return;
   const pulse = 0.5 + Math.sin(elapsed * 16) * 0.5;
@@ -6837,6 +7162,7 @@ function draw() {
   if (!player) {
     return;
   }
+  const showGameplayHud = state !== "gameover" && state !== "menu";
 
   drones
     .filter((drone) => drone.type === "mothership")
@@ -6851,10 +7177,13 @@ function draw() {
   }
 
   drones.forEach((drone) => {
-    if (drone.type === "mothership") return;
+    if (drone.type === "mothership" || drone.bossEscort) return;
     drawDrone(drone);
   });
   drawBoss();
+  drones.forEach((drone) => {
+    if (drone.bossEscort) drawDrone(drone);
+  });
   drawShieldTransfers();
 
   drawNukeEffects();
@@ -7043,7 +7372,7 @@ function draw() {
     ctx.restore();
   }
 
-  if (state !== "dying") {
+  if (showGameplayHud && state !== "dying") {
     drawStreakAura();
     drawPlayerInvulnerability();
     drawPlayerFrenzyCue();
@@ -7055,16 +7384,19 @@ function draw() {
     ctx.restore();
   }
 
-  drawPlayerHealth();
-  drawEnergyPips();
-  drawPowerupInventory();
-  drawTopScore();
-  drawPlayerHealCue();
-  drawPlayerDamageCue();
+  if (showGameplayHud) {
+    drawPlayerHealth();
+    drawEnergyPips();
+    drawPowerupInventory();
+    drawTopScore();
+    drawPlayerHealCue();
+    drawPlayerDamageCue();
+  }
   ctx.restore();
   drawPlayerHealOverlay();
   drawPlayerDamageOverlay();
   drawPlayerDeathOverlay();
+  drawBossDefeatOverlay();
 }
 
 function loop(now) {
@@ -7109,7 +7441,6 @@ window.addEventListener("keydown", (event) => {
     return;
   }
   if (key === "1") spawnDebugPowerup("shotgun");
-  if (key === "2") spawnDebugPowerup("laser");
   if (key === "3") spawnDebugPowerup("missiles");
   if (key === "4") spawnDebugPowerup("machinegun");
   if (key === "e" && player) {
