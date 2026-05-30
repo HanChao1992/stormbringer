@@ -83,9 +83,13 @@ const { powerupInfo, killLabels, encyclopedia } = window.StormbringerData;
 const { LAST_RUN_KEY, BEST_RUN_KEY, LEGACY_LAST_RUN_KEY, LEGACY_BEST_RUN_KEY, emptyKills, loadStoredSummary, storeSummary, formatSigned } = window.StormbringerRecords;
 let lastRunSummary = loadStoredSummary(LAST_RUN_KEY) || loadStoredSummary(LEGACY_LAST_RUN_KEY);
 let bestRunSummary = loadStoredSummary(BEST_RUN_KEY) || loadStoredSummary(LEGACY_BEST_RUN_KEY);
-let nextBossWave = 10;
+const FIRST_BOSS_WAVE = 10;
+const SECOND_BOSS_WAVE = 15;
+let nextBossWave = FIRST_BOSS_WAVE;
 let wave = 1;
 let announcedWave = 1;
+let firstBossDefeated = false;
+let secondBossDefeated = false;
 let elapsed = 0;
 let gameplayElapsed = 0;
 let spawnTimer;
@@ -123,6 +127,10 @@ let movementHintCollected = false;
 let combatTutorialEnemySpawned = false;
 let combatTutorialEnemyKilled = false;
 let combatTutorialPowerupCollected = false;
+let openingSequenceActive = false;
+let openingSequenceTimer = 0;
+let openingSequenceStep = 0;
+let firstUltimateMoment = false;
 let debugVisible = false;
 const ULTIMATE_CUE_DURATION = 0.55;
 const SHIELD_COLOR = "#2667ff";
@@ -189,6 +197,23 @@ const WAVE_THEMES = [
   { key: "jet", label: "Jet Ambush", color: "#edf7f5" },
   { key: "mixed", label: "Assault Mix", color: "#6df6d5" },
 ];
+const WAVE_PLAN = [
+  { key: "formation", label: "Fighter Formation", color: "#ffd166" },
+  { key: "ufo", label: "UFO Crossfire", color: "#8a7dff" },
+  { key: "mine", label: "Mine Corridor", color: "#ff5b74" },
+  { key: "cargo", label: "Cargo Rush", color: "#ffd166" },
+  { key: "jet", label: "Jet Ambush", color: "#edf7f5" },
+  { key: "mixed", label: "Assault Mix", color: "#6df6d5" },
+  { key: "splitter", label: "Splitter Cell", color: "#ff5b74" },
+  { key: "mine", label: "Mine Chain", color: "#ff5b74" },
+  { key: "formation", label: "Final Approach", color: "#ffd166" },
+  { key: "boss", label: "Cannon Warden", color: "#ff5b74" },
+  { key: "splitter", label: "Fracture Swarm", color: "#ff5b74" },
+  { key: "mine", label: "Salvage Minefield", color: "#ffd166" },
+  { key: "jet", label: "Lock-On Crossfire", color: "#edf7f5" },
+  { key: "mixed", label: "Eclipse Approach", color: "#8a7dff" },
+  { key: "boss2", label: "Eclipse Array", color: "#8a7dff" },
+];
 const WAVE_PACE_PRESETS = {
   current: {
     formation: 1,
@@ -198,7 +223,8 @@ const WAVE_PACE_PRESETS = {
     cargo: 3,
     planet: 1,
     splitter: 4,
-    boss: 10,
+    boss: FIRST_BOSS_WAVE,
+    boss2: SECOND_BOSS_WAVE,
   },
   staged: {
     formation: 1,
@@ -208,7 +234,8 @@ const WAVE_PACE_PRESETS = {
     jet: 5,
     planet: 6,
     splitter: 7,
-    boss: 10,
+    boss: FIRST_BOSS_WAVE,
+    boss2: SECOND_BOSS_WAVE,
   },
 };
 const ACTIVE_WAVE_PACE = WAVE_PACE_PRESETS.staged;
@@ -218,6 +245,7 @@ const HIDDEN_POWERUPS = new Set(["laser"]);
 const debugKeyEntries = [
   { mark: "`", title: "Debug Overlay", text: "Show or hide live run stats.", tip: "Use this when tuning waves, drops, bullets, and boss state.", color: "#6df6d5" },
   { mark: "B", title: "Start Boss", text: "Immediately brings in the first boss if no boss is active.", tip: "Bosses normally arrive through the wave schedule.", color: "#ff5b74" },
+  { mark: "N", title: "Eclipse Boss", text: "Immediately brings in the second boss prototype.", tip: "Tests rotating armor plates, beam lanes, and reward gravity.", color: "#8a7dff" },
   { mark: "M", title: "Planet Pack", text: "Summons a named planet with nearby fighters for aura testing.", tip: "Enemies and the player fire faster inside the gold frenzy aura.", color: "#ffd166" },
   { mark: "S", title: "S Rank", text: "Instantly fills the streak system to S rank.", tip: "Useful for testing weapon overdrives and high-rank energy flow.", color: "#ff5b74" },
   { mark: "1", title: "Shotgun Drop", text: "Spawns the shotgun main weapon powerup near the player.", tip: "Main weapon slot.", color: "#ffd166" },
@@ -243,8 +271,8 @@ const isMagnetTutorialActive = () => tutorialPhase === "magnet" && magnetHintAct
 const isCombatTutorialActive = () => tutorialPhase === "combat";
 const isTutorialActive = () => isMovementTutorialActive() || isMagnetTutorialActive() || isCombatTutorialActive();
 const inventorySlotCount = () => (currentStreakLevel() >= 5 ? 4 : currentStreakLevel() >= 4 ? 3 : currentStreakLevel() >= 3 ? 2 : 1);
-const isPreBossReliefWave = () => wave === ACTIVE_WAVE_PACE.boss - 1;
-const currentWaveTheme = () => (isPreBossReliefWave() ? PRE_BOSS_THEME : WAVE_THEMES[(wave - 1) % WAVE_THEMES.length]);
+const isPreBossReliefWave = () => wave === FIRST_BOSS_WAVE - 1 || wave === SECOND_BOSS_WAVE - 1;
+const currentWaveTheme = () => WAVE_PLAN[wave - 1] || (isPreBossReliefWave() ? PRE_BOSS_THEME : WAVE_THEMES[(wave - 1) % WAVE_THEMES.length]);
 const hasSStreak = () => currentStreakLevel() >= STREAK_LAYERS.length;
 const minimumEnergy = () => (hasSStreak() ? 1 : 0);
 const scoreMultiplier = () => (hasSStreak() ? 1.3 : currentStreakLevel() >= 4 ? 1.2 : 1);
@@ -313,6 +341,15 @@ const dist2 = (a, b) => {
   const dx = a.x - b.x;
   const dy = a.y - b.y;
   return dx * dx + dy * dy;
+};
+const distToSegmentSq = (point, a, b) => {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const lengthSq = dx * dx + dy * dy || 1;
+  const t = clamp(((point.x - a.x) * dx + (point.y - a.y) * dy) / lengthSq, 0, 1);
+  const x = a.x + dx * t;
+  const y = a.y + dy * t;
+  return (point.x - x) ** 2 + (point.y - y) ** 2;
 };
 const angleTowardPlayer = (entity, localForwardAngle = 0) => {
   const target = player || { x: entity.x + (entity.vx || 0), y: entity.y + (entity.vy || 1) };
@@ -1081,11 +1118,20 @@ function resetGame(options = {}) {
   runStats = {
     startedAt: Date.now(),
     sRankTime: 0,
+    ultimatesTriggered: 0,
+    firstUltimateAt: null,
+    powerupsCollected: 0,
+    energyCollected: 0,
+    magnetUseTime: 0,
+    magnetDangerTime: 0,
+    damageTaken: 0,
     kills: emptyKills(),
   };
-  nextBossWave = ACTIVE_WAVE_PACE.boss;
+  nextBossWave = FIRST_BOSS_WAVE;
   wave = 1;
   announcedWave = 1;
+  firstBossDefeated = false;
+  secondBossDefeated = false;
   elapsed = 0;
   gameplayElapsed = 0;
   spawnTimer = 1.05;
@@ -1125,6 +1171,10 @@ function resetGame(options = {}) {
   combatTutorialEnemySpawned = false;
   combatTutorialEnemyKilled = false;
   combatTutorialPowerupCollected = false;
+  openingSequenceActive = skipTutorial;
+  openingSequenceTimer = 0;
+  openingSequenceStep = 0;
+  firstUltimateMoment = true;
   state = "playing";
   startScreen.classList.add("hidden");
   gameShell.classList.remove("hidden");
@@ -1526,6 +1576,7 @@ function applyMineBlast(mine) {
 function damagePlayer({ kind = "bullet", label = "HULL HIT", knockbackAngle = null, knockback = 0, shakeAmount = 0.32 } = {}) {
   if (!player || player.invuln > 0) return false;
   player.hits -= 1;
+  if (runStats) runStats.damageTaken = (runStats.damageTaken || 0) + 1;
   player.invuln = PLAYER_HIT_INVULN;
   if (knockbackAngle !== null && knockback > 0) {
     player.x = clamp(player.x + Math.cos(knockbackAngle) * knockback, 18, WIDTH - 18);
@@ -1598,7 +1649,7 @@ function startPlayerDeathSequence() {
   audio.playerDeath();
 }
 
-function startBossDefeatSequence(x, y) {
+function startBossDefeatSequence(x, y, bossType = "warden") {
   if (bossDefeatSequence) return;
   state = "victory";
   audio.setMusicMode("normal");
@@ -1618,11 +1669,13 @@ function startBossDefeatSequence(x, y) {
   bossDefeatSequence = {
     x,
     y,
+    bossType,
+    outcome: bossType === "eclipse" ? "victory" : "continue",
     timer: 2.05,
     maxTimer: 2.05,
     burstTimer: 0,
   };
-  addFloatingText(x, y - 70, "WARDEN DESTROYED", "#ffd166");
+  addFloatingText(x, y - 70, bossType === "eclipse" ? "ECLIPSE DESTROYED" : "WARDEN DESTROYED", bossType === "eclipse" ? "#8a7dff" : "#ffd166");
   addRingBurst(x, y, "#ffd166", 52, 22, 520, 5.2);
   addRingBurst(x, y, "#ff5b74", 36, 10, 440, 4.6);
   addRingBurst(x, y, "#edf7f5", 18, 4, 320, 3.6);
@@ -2060,6 +2113,7 @@ function spawnFirstBoss() {
     drone.targetY = drone.y;
   });
   boss = {
+    type: "warden",
     x: WIDTH / 2,
     y: -120,
     targetY: 128,
@@ -2083,6 +2137,55 @@ function spawnFirstBoss() {
   addFloatingText(WIDTH / 2, 92, "BOSS: CANNON WARDEN", "#ff5b74");
   addRingBurst(WIDTH / 2, 122, "#ff5b74", 38, 24, 360, 4.2);
   addRingBurst(WIDTH / 2, 122, "#ffd166", 20, 6, 260, 3.2);
+  hitStop = Math.max(hitStop, 0.11);
+  shake = Math.max(shake, 0.48);
+}
+
+function prepareBossEntrance() {
+  audio.mothershipAlert();
+  audio.setMusicMode("boss");
+  bullets = [];
+  missiles = [];
+  missileTrails = [];
+  drones.forEach((drone) => {
+    drone.exiting = true;
+    drone.cooldown = 99;
+    drone.vx = drone.x < WIDTH / 2 ? -150 : 150;
+    drone.targetY = drone.y;
+  });
+}
+
+function spawnSecondBoss() {
+  prepareBossEntrance();
+  boss = {
+    type: "eclipse",
+    x: WIDTH / 2,
+    y: -150,
+    targetY: 140,
+    r: 76,
+    hp: 180,
+    maxHp: 180,
+    armor: 0,
+    maxArmor: 0,
+    armorFlash: 0,
+    flash: 0,
+    rotation: 0,
+    rotationSpeed: 0.82,
+    orbitTimer: 1.25,
+    beamTimer: 2.1,
+    gravityTimer: 4.2,
+    gravityWell: 0,
+    beams: [],
+    wobble: 0,
+    parts: [
+      { id: "plateA", label: "PLATE", angle: -Math.PI / 2, orbitR: 78, r: 20, hp: 38, maxHp: 38, alive: true, flash: 0 },
+      { id: "plateB", label: "PLATE", angle: Math.PI * 0.17, orbitR: 78, r: 20, hp: 38, maxHp: 38, alive: true, flash: 0 },
+      { id: "plateC", label: "PLATE", angle: Math.PI * 0.83, orbitR: 78, r: 20, hp: 38, maxHp: 38, alive: true, flash: 0 },
+    ],
+  };
+  addFloatingText(WIDTH / 2, 92, "BOSS: ECLIPSE ARRAY", "#8a7dff");
+  addRingBurst(WIDTH / 2, 122, "#8a7dff", 42, 24, 360, 4.2);
+  addRingBurst(WIDTH / 2, 122, "#6df6d5", 20, 8, 260, 3.2);
   hitStop = Math.max(hitStop, 0.11);
   shake = Math.max(shake, 0.48);
 }
@@ -2129,7 +2232,7 @@ function spawnCombatTutorialFighter() {
 
 function spawnFormationFighter(options) {
   const maxHp = fighterHp(2 + Math.floor(wave / 5));
-  drones.push({
+  const fighter = {
     x: options.x,
     y: options.y,
     vx: options.vx || 0,
@@ -2152,7 +2255,9 @@ function spawnFormationFighter(options) {
       sweep: options.sweep || 0,
       startY: options.y,
     },
-  });
+  };
+  drones.push(fighter);
+  return fighter;
 }
 
 function spawnBossReinforcements() {
@@ -2265,6 +2370,55 @@ function spawnFighterFormation(themeKey = currentWaveTheme().key) {
   }
 
   return true;
+}
+
+function startOpeningSequence() {
+  openingSequenceActive = true;
+  openingSequenceTimer = 0;
+  openingSequenceStep = 0;
+  spawnTimer = 999;
+  formationTimer = Math.max(formationTimer || 0, 4);
+  breatherTimer = 0;
+}
+
+function spawnOpeningFormation() {
+  const laneX = WIDTH / 2;
+  const weaponDrops = ["shotgun", "missiles", "machinegun"];
+  const guaranteedPower = weaponDrops[Math.floor(rand(0, weaponDrops.length))];
+  for (let i = 0; i < 7; i += 1) {
+    const offset = i - 3;
+    const fighter = spawnFormationFighter({
+      x: laneX + offset * 34,
+      y: -70 - Math.abs(offset) * 18,
+      laneX,
+      offsetX: offset * 34,
+      speed: 118,
+      arcAmp: 18,
+      arcPhase: offset * 0.22,
+      pattern: "chevron",
+      targetY: 108 + Math.abs(offset) * 14,
+    });
+    if (fighter) {
+      fighter.openingEnemy = true;
+      fighter.guaranteedEnergyDrops = i < 6 ? 1 : 0;
+      if (i === 3) fighter.guaranteedPowerupType = guaranteedPower;
+    }
+  }
+  addRingBurst(WIDTH / 2, 82, "#ffd166", 20, 8, 240, 2.6);
+}
+
+function updateOpeningSequence(dt) {
+  if (!openingSequenceActive || isTutorialActive() || boss) return;
+  openingSequenceTimer += dt;
+  if (openingSequenceStep === 0 && openingSequenceTimer >= 0.35) {
+    spawnOpeningFormation();
+    openingSequenceStep = 1;
+  }
+  if (openingSequenceStep === 1 && openingSequenceTimer >= 6.2) {
+    openingSequenceActive = false;
+    spawnTimer = Math.min(spawnTimer || 0.8, 0.8);
+    formationTimer = Math.min(formationTimer || 3.2, 3.2);
+  }
 }
 
 function spawnMine(x, y, options = {}) {
@@ -2516,6 +2670,10 @@ function executePendingThreat() {
   }
   if (threat.type === "boss") {
     spawnFirstBoss();
+    return true;
+  }
+  if (threat.type === "boss2") {
+    spawnSecondBoss();
     return true;
   }
   if (threat.type === "jet") return spawnFighterJet();
@@ -2919,6 +3077,7 @@ function activateQueuedPowerup(slot) {
 function collectPowerup(type) {
   if (isPowerupHidden(type)) return false;
   const info = powerupInfo[type] || powerupInfo.shotgun;
+  if (runStats) runStats.powerupsCollected = (runStats.powerupsCollected || 0) + 1;
   player.inventory ||= [];
   if (activeWeaponInSlot(info.slot)) {
     if (player.inventory.length < inventorySlotCount()) {
@@ -3001,6 +3160,14 @@ function beginUltimateCue() {
   const info = ultimateDisplayInfo(types[types.length - 1]);
   const emptyScreen = !hasUltimateTargets();
   const holdForTargets = emptyScreen && spawnUltimatePayoffWave();
+  const firstMoment = firstUltimateMoment;
+  firstUltimateMoment = false;
+  if (runStats) {
+    runStats.ultimatesTriggered = (runStats.ultimatesTriggered || 0) + 1;
+    if (runStats.firstUltimateAt === null || typeof runStats.firstUltimateAt === "undefined") {
+      runStats.firstUltimateAt = gameplayElapsed;
+    }
+  }
   player.charge = minimumEnergy();
   const healed = healPlayer(1);
   ultimateCue = {
@@ -3009,17 +3176,19 @@ function beginUltimateCue() {
     types,
     label: types.map((type) => ultimateDisplayInfo(type).label).join(" + "),
     color: info.color,
-    timer: holdForTargets ? 0.9 : ULTIMATE_CUE_DURATION,
-    life: (holdForTargets ? 1.55 : ULTIMATE_CUE_DURATION + 0.8),
-    maxLife: (holdForTargets ? 1.55 : ULTIMATE_CUE_DURATION + 0.8),
+    timer: holdForTargets ? 0.9 : firstMoment ? 0.95 : ULTIMATE_CUE_DURATION,
+    life: (holdForTargets ? 1.55 : firstMoment ? 1.85 : ULTIMATE_CUE_DURATION + 0.8),
+    maxLife: (holdForTargets ? 1.55 : firstMoment ? 1.85 : ULTIMATE_CUE_DURATION + 0.8),
     holdForTargets,
     holdTimer: holdForTargets ? 1.1 : 0,
     fired: false,
+    firstMoment,
   };
   audio.ultimateCharge(info.sound);
-  addFloatingText(player.x, player.y - 42, ultimateCue.label, info.color);
-  addRingBurst(player.x, player.y, info.color, 20, 8, 210, 3);
-  shake = Math.max(shake, 0.08);
+  addFloatingText(player.x, player.y - 42, firstMoment ? `FIRST STORM: ${ultimateCue.label}` : ultimateCue.label, info.color);
+  addRingBurst(player.x, player.y, info.color, firstMoment ? 32 : 20, firstMoment ? 13 : 8, firstMoment ? 300 : 210, firstMoment ? 3.7 : 3);
+  if (firstMoment) addRingBurst(player.x, player.y, "#edf7f5", 18, 4, 220, 2.6);
+  shake = Math.max(shake, firstMoment ? 0.16 : 0.08);
 }
 
 function triggerChargeRelease() {
@@ -3411,10 +3580,18 @@ function destroyDrone(drone, grantCharge = true) {
     }
     addFloatingText(drone.x, drone.y - 42, "COLLECT POWERUP", "#ffd166");
   } else {
+    if (drone.guaranteedEnergyDrops) {
+      for (let i = 0; i < drone.guaranteedEnergyDrops; i += 1) {
+        spawnEnergyShard(drone.x + rand(-8, 8), drone.y + rand(-6, 8));
+      }
+    }
+    if (drone.guaranteedPowerupType) {
+      spawnPowerup(drone.x, drone.y, drone.guaranteedPowerupType);
+    }
     if (grantCharge && drone.type !== "mothership" && Math.random() < energyChance) {
       spawnEnergyShard(drone.x, drone.y);
     }
-    if (drone.type !== "mothership" && Math.random() < powerupChance) {
+    if (drone.type !== "mothership" && !drone.guaranteedPowerupType && Math.random() < powerupChance) {
       spawnPowerup(drone.x, drone.y);
     }
   }
@@ -3435,8 +3612,34 @@ function bossCannonCount() {
   return boss ? boss.parts.filter((part) => part.alive).length : 0;
 }
 
+function eclipsePartWorld(part) {
+  const angle = (boss.rotation || 0) + part.angle;
+  return {
+    x: boss.x + Math.cos(angle) * part.orbitR,
+    y: boss.y + Math.sin(angle) * part.orbitR * 0.72,
+  };
+}
+
 function bossTargets() {
   if (!boss) return [];
+  if (boss.type === "eclipse") {
+    const targets = boss.parts
+      .filter((part) => part.alive)
+      .map((part) => {
+        const pos = eclipsePartWorld(part);
+        return {
+          kind: "part",
+          part,
+          x: pos.x,
+          y: pos.y,
+          r: part.r,
+        };
+      });
+    if (!targets.length) {
+      targets.push({ kind: "torso", x: boss.x, y: boss.y + 6, r: boss.r * 0.56 });
+    }
+    return targets;
+  }
   const targets = boss.parts
     .filter((part) => part.alive)
     .map((part) => ({
@@ -3469,6 +3672,55 @@ function damageBossArmor(amount = 1) {
 
 function damageBossTarget(target, amount) {
   if (!boss || !target) return false;
+  if (boss.type === "eclipse") {
+    if (target.kind === "part" && target.part.alive) {
+      target.part.hp -= amount;
+      target.part.flash = 0.18;
+      if (target.part.hp <= 0) {
+        target.part.alive = false;
+        target.part.hp = 0;
+        recordKill("bossCannon");
+        registerStreakKill("bossCannon", target.x, target.y);
+        awardScore(700, target.x, target.y - 28, "#ffd166");
+        addFloatingText(target.x, target.y - 18, "PLATE SHATTERED", "#ffd166");
+        addBossCannonDeath(target.x, target.y);
+        spawnPowerup(target.x, target.y);
+        for (let i = 0; i < 2; i += 1) {
+          spawnEnergyShard(target.x + rand(-16, 16), target.y + rand(-10, 16));
+        }
+        for (let i = 0; i < 10; i += 1) {
+          const angle = (i / 10) * Math.PI * 2 + rand(-0.14, 0.14);
+          spawnBullet(target.x, target.y, angle, rand(90, 145), 4, "#8a7dff");
+        }
+        shake = Math.max(shake, 0.2);
+      }
+      return { hit: true, layer: "health", healthRatio: target.part.hp / target.part.maxHp };
+    }
+    if (target.kind === "torso") {
+      if (bossCannonsAlive()) {
+        boss.flash = Math.max(boss.flash || 0, 0.08);
+        addFloatingText(boss.x, boss.y - 58, "BREAK PLATES", "#ffd166");
+        return { hit: true, layer: "armor", healthRatio: boss.hp / boss.maxHp };
+      }
+      boss.hp -= amount;
+      boss.flash = 0.16;
+      if (boss.hp <= 0) {
+        const bossX = boss.x;
+        const bossY = boss.y;
+        const defeatedType = boss.type;
+        recordKill("boss");
+        registerStreakKill("boss", bossX, bossY);
+        awardScore(3400, bossX, bossY - 76, "#ffd166");
+        addFloatingText(bossX, bossY - 58, "ARRAY COLLAPSED", "#8a7dff");
+        addBossTorsoDeath(bossX, bossY);
+        boss = null;
+        shake = Math.max(shake, 0.55);
+        startBossDefeatSequence(bossX, bossY, defeatedType);
+      }
+      return { hit: true, layer: "health", healthRatio: boss ? boss.hp / boss.maxHp : 0 };
+    }
+    return { hit: false, layer: "health", healthRatio: 1 };
+  }
   if (target.kind === "part" && target.part.alive) {
     target.part.hp -= amount;
     target.part.flash = 0.16;
@@ -3517,6 +3769,7 @@ function damageBossTarget(target, amount) {
     if (boss.hp <= 0 && !bossCannonsAlive()) {
       const bossX = boss.x;
       const bossY = boss.y;
+      const defeatedType = boss.type;
       recordKill("boss");
       registerStreakKill("boss", bossX, bossY);
       awardScore(2600, bossX, bossY - 76, "#ffd166");
@@ -3524,7 +3777,7 @@ function damageBossTarget(target, amount) {
       addBossTorsoDeath(bossX, bossY);
       boss = null;
       shake = Math.max(shake, 0.48);
-      startBossDefeatSequence(bossX, bossY);
+      startBossDefeatSequence(bossX, bossY, defeatedType);
     } else if (boss.hp <= 0) {
       boss.hp = 1;
       addFloatingText(boss.x, boss.y - 48, "BREAK CANNONS", "#ffd166");
@@ -3900,7 +4153,13 @@ function updatePlayer(dt) {
 }
 
 function updateEnemies(dt) {
-  if (!boss && isWaveUnlocked("boss") && wave >= nextBossWave && (!pendingThreat || pendingThreat.type !== "boss")) {
+  if (openingSequenceActive) {
+    spawnTimer = Math.max(spawnTimer || 0, 0.65);
+    formationTimer = Math.max(formationTimer || 0, 1.2);
+  }
+  if (!boss && !secondBossDefeated && wave >= SECOND_BOSS_WAVE && (!pendingThreat || pendingThreat.type !== "boss2")) {
+    scheduleThreat("boss2", 1.15, "ECLIPSE SIGNAL", "#8a7dff");
+  } else if (!boss && !firstBossDefeated && wave >= FIRST_BOSS_WAVE && (!pendingThreat || pendingThreat.type !== "boss")) {
     scheduleThreat("boss", 1.15, "BOSS SIGNAL", "#ff5b74");
   }
   const theme = currentWaveTheme();
@@ -3917,7 +4176,7 @@ function updateEnemies(dt) {
     }
   }
   spawnTimer -= dt;
-  if (!boss && !pendingThreat && breatherTimer <= 0 && spawnTimer <= 0) {
+  if (!openingSequenceActive && !boss && !pendingThreat && breatherTimer <= 0 && spawnTimer <= 0) {
     const canFormation = isWaveUnlocked("formation") && formationTimer <= 0 && !activeMothership() && activeEnemyCount("ship") <= 12;
     const canMinefield = isWaveUnlocked("minefield") && minefieldTimer <= 0 && activeEnemyCount("mine") <= 5;
     let didFormation = false;
@@ -3934,7 +4193,7 @@ function updateEnemies(dt) {
       mothershipSpawnCooldown = 24;
     } else if (isWaveUnlocked("jet") && activeEnemyCount("jet") < 2 && Math.random() < (themeKey === "jet" ? 0.58 : 0.28)) {
       scheduleThreat("jet", 0.7, "JET LOCKERS", "#edf7f5", themeKey);
-    } else if (isWaveUnlocked("splitter") && activeEnemyCount("splitter") < SPLITTER_MAX_ACTIVE && Math.random() < (themeKey === "mixed" ? 0.52 : 0.42)) {
+    } else if (isWaveUnlocked("splitter") && activeEnemyCount("splitter") < SPLITTER_MAX_ACTIVE && Math.random() < (themeKey === "splitter" ? 0.72 : themeKey === "mixed" ? 0.52 : 0.42)) {
       scheduleThreat("splitter", 0.75, "SPLITTER CELL", "#ff5b74", themeKey);
     } else if (isWaveUnlocked("cargo") && activeEnemyCount("cargo") < 1 && Math.random() < (themeKey === "cargo" ? 0.62 : 0.25)) {
       spawnCargoShip();
@@ -3949,7 +4208,7 @@ function updateEnemies(dt) {
       if (isWaveUnlocked("ufo") && Math.random() < extraChance) {
         if (isWaveUnlocked("jet") && activeEnemyCount("jet") < 2 && Math.random() < (themeKey === "jet" ? 0.42 : 0.24)) {
           spawnFighterJet();
-        } else if (isWaveUnlocked("splitter") && activeEnemyCount("splitter") < SPLITTER_MAX_ACTIVE && Math.random() < (themeKey === "mixed" ? 0.42 : 0.32)) {
+        } else if (isWaveUnlocked("splitter") && activeEnemyCount("splitter") < SPLITTER_MAX_ACTIVE && Math.random() < (themeKey === "splitter" ? 0.58 : themeKey === "mixed" ? 0.42 : 0.32)) {
           spawnSplitter();
         } else if (isWaveUnlocked("cargo") && activeEnemyCount("cargo") < 1 && Math.random() < (themeKey === "cargo" ? 0.42 : 0.2)) {
           spawnCargoShip();
@@ -4226,6 +4485,10 @@ function updateEnemies(dt) {
 
 function updateBoss(dt) {
   if (!boss) return;
+  if (boss.type === "eclipse") {
+    updateEclipseBoss(dt);
+    return;
+  }
   boss.wobble += dt * 1.6;
   boss.y += (boss.targetY - boss.y) * dt * 0.55;
   boss.x += Math.sin(boss.wobble) * 28 * dt;
@@ -4269,6 +4532,89 @@ function updateBoss(dt) {
     }
   }
 
+}
+
+function spawnEclipseBeam() {
+  if (!boss || boss.type !== "eclipse") return;
+  const side = Math.random() < 0.5 ? -1 : 1;
+  const angle = Math.PI / 2 + side * rand(0.1, 0.28);
+  boss.beams.push({
+    x: boss.x + side * rand(42, 72),
+    y: boss.y + 20,
+    angle,
+    width: rand(18, 24),
+    warning: 1.12,
+    warningMax: 1.12,
+    life: 1.62,
+    maxLife: 1.62,
+  });
+}
+
+function updateEclipseBoss(dt) {
+  boss.wobble += dt * 1.2;
+  boss.y += (boss.targetY - boss.y) * dt * 0.55;
+  boss.x += (WIDTH / 2 - boss.x) * dt * 0.28 + Math.sin(boss.wobble) * 8 * dt;
+  boss.x = clamp(boss.x, 110, WIDTH - 110);
+  boss.rotation += boss.rotationSpeed * dt;
+  boss.flash = Math.max(0, boss.flash - dt);
+  boss.parts.forEach((part) => {
+    part.flash = Math.max(0, (part.flash || 0) - dt);
+  });
+  boss.beams = (boss.beams || []).filter((beam) => {
+    beam.warning -= dt;
+    beam.life -= dt;
+    return beam.life > 0;
+  });
+  if (Math.abs(boss.y - boss.targetY) > 30) return;
+
+  const platesAlive = bossCannonCount();
+  const pressure = 3 - platesAlive;
+  boss.orbitTimer -= dt;
+  if (boss.orbitTimer <= 0) {
+    boss.parts.filter((part) => part.alive).forEach((part) => {
+      const pos = eclipsePartWorld(part);
+      const baseAngle = Math.atan2(player.y - pos.y, player.x - pos.x);
+      [-0.16, 0, 0.16].forEach((spread) => {
+        spawnBullet(pos.x, pos.y, baseAngle + spread, 128 + pressure * 18, 4.5, "#ff5b74");
+      });
+    });
+    if (!platesAlive) {
+      for (let i = -4; i <= 4; i += 1) {
+        spawnBullet(boss.x, boss.y + 8, Math.PI / 2 + i * 0.11, 150 + pressure * 12, 4.5, "#ff8c42");
+      }
+    }
+    boss.orbitTimer = platesAlive ? Math.max(0.82, 1.32 - pressure * 0.16) : 0.74;
+  }
+
+  boss.beamTimer -= dt;
+  if (boss.beamTimer <= 0) {
+    spawnEclipseBeam();
+    boss.beamTimer = Math.max(1.55, rand(2.25, 2.85) - pressure * 0.22);
+  }
+
+  boss.gravityTimer -= dt;
+  if (boss.gravityTimer <= 0) {
+    boss.gravityWell = 3.1;
+    boss.gravityTimer = rand(7.4, 9.2);
+    addFloatingText(boss.x, boss.y - 76, "GRAVITY WELL", "#8a7dff");
+    addRingBurst(boss.x, boss.y, "#8a7dff", 42, 12, 250, 3.2);
+  }
+  boss.gravityWell = Math.max(0, (boss.gravityWell || 0) - dt);
+  if (boss.gravityWell > 0) {
+    const pullItems = (items) => items.filter((item) => {
+      const distance = Math.sqrt(dist2(boss, item));
+      if (distance < boss.r * 0.42) {
+        addParticles(item.x, item.y, item.type ? (powerupInfo[item.type] || powerupInfo.shotgun).color : "#6df6d5", 8, 140);
+        return false;
+      }
+      const pull = clamp((520 - distance) / 520, 0, 1) * 0.018;
+      item.x += (boss.x - item.x) * pull;
+      item.y += (boss.y - item.y) * pull;
+      return true;
+    });
+    shards = pullItems(shards);
+    powerups = pullItems(powerups);
+  }
 }
 
 function updateProjectiles(dt) {
@@ -4481,6 +4827,18 @@ function resolveCollisions() {
     }
   }
 
+  if (!circleActive && boss && boss.type === "eclipse" && player.invuln <= 0) {
+    for (const beam of boss.beams || []) {
+      if (beam.warning > 0) continue;
+      const start = { x: beam.x, y: beam.y };
+      const end = { x: beam.x + Math.cos(beam.angle) * (HEIGHT + 160), y: beam.y + Math.sin(beam.angle) * (HEIGHT + 160) };
+      if (distToSegmentSq(player, start, end) <= (beam.width * 0.5 + player.r) ** 2) {
+        damagePlayer({ kind: "laser", label: "LANCE HIT -1", shakeAmount: 0.45 });
+        break;
+      }
+    }
+  }
+
   bullets = bullets.filter((bullet) => {
     const hitRadius = player.r + bullet.r + (bullet.laser ? 6 : -1);
     if (!circleActive && player.invuln <= 0 && dist2(player, bullet) < hitRadius * hitRadius) {
@@ -4600,6 +4958,7 @@ function resolveCollisions() {
     }
     if (dist2(player, shard) < (player.r + shard.r + 2) ** 2) {
       addCharge(1);
+      if (runStats) runStats.energyCollected = (runStats.energyCollected || 0) + 1;
       if (shard.hintBait) {
         magnetHintCollected = Math.min(3, magnetHintCollected + 1);
         magnetHintEnergyPulse = 0.55;
@@ -4682,6 +5041,13 @@ function buildRunSummary(outcome = "death") {
     outcome,
     bestStreak: bestStreakLevel,
     sRankTime: runStats ? runStats.sRankTime || 0 : 0,
+    ultimatesTriggered: runStats ? runStats.ultimatesTriggered || 0 : 0,
+    firstUltimateAt: runStats ? runStats.firstUltimateAt : null,
+    powerupsCollected: runStats ? runStats.powerupsCollected || 0 : 0,
+    energyCollected: runStats ? runStats.energyCollected || 0 : 0,
+    magnetUseTime: runStats ? runStats.magnetUseTime || 0 : 0,
+    magnetDangerTime: runStats ? runStats.magnetDangerTime || 0 : 0,
+    damageTaken: runStats ? runStats.damageTaken || 0 : 0,
     kills: { ...emptyKills(), ...(runStats ? runStats.kills : {}) },
     endedAt: Date.now(),
   };
@@ -4694,12 +5060,42 @@ function formatDuration(seconds = 0) {
   return minutes > 0 ? `${minutes}:${String(remaining).padStart(2, "0")}` : `${remaining}s`;
 }
 
+function runTips(summary) {
+  const tips = [];
+  if ((summary.ultimatesTriggered || 0) <= 0) {
+    tips.push("Collect blue energy aggressively. Five units heal you and trigger your weapon release.");
+  }
+  if ((summary.powerupsCollected || 0) <= 0) {
+    tips.push("Prioritize the letter drops. Main and sub weapons are the fastest way to change the run.");
+  }
+  if ((summary.magnetUseTime || 0) < 3 && (summary.energyCollected || 0) >= 3) {
+    tips.push("Use right mouse in short bursts to pull energy before it leaves the play area.");
+  }
+  if ((summary.magnetDangerTime || 0) > 8 || (summary.damageTaken || 0) >= 4) {
+    tips.push("Release magnet after the first pull. Holding too long turns enemy fire into tracking pressure.");
+  }
+  if ((summary.sRankTime || 0) <= 0 && (summary.wave || 0) >= 3) {
+    tips.push("Kills and collection refresh streak decay. Keep collecting between enemy waves to reach higher ranks.");
+  }
+  if (tips.length < 2 && (summary.ultimatesTriggered || 0) > 0) {
+    tips.push("Time energy releases when enemies are present. Empty-screen ultimates will call in targets, but active waves pay off harder.");
+  }
+  if (tips.length < 2) {
+    tips.push("Stay near the lower middle during formations so the opening energy drops remain reachable.");
+  }
+  return tips.slice(0, 2);
+}
+
 function runSummaryHtml(summary, previousSummary, previousBest) {
   const lastDelta = previousSummary ? summary.score - previousSummary.score : 0;
   const bestScore = previousBest ? Math.max(summary.score, previousBest.score) : summary.score;
   const bestDelta = previousBest ? summary.score - previousBest.score : 0;
   const bestStatus = !previousBest || summary.score > previousBest.score ? "New best" : formatSigned(bestDelta);
   const lastStatus = previousSummary ? formatSigned(lastDelta) : "First recorded";
+  const firstUltimate = Number.isFinite(summary.firstUltimateAt) ? formatDuration(summary.firstUltimateAt) : "-";
+  const tips = runTips(summary)
+    .map((tip) => `<li>${tip}</li>`)
+    .join("");
   const killRows = Object.entries(killLabels)
     .map(([key, label]) => `
       <div class="kill-row">
@@ -4725,6 +5121,21 @@ function runSummaryHtml(summary, previousSummary, previousBest) {
           <strong>${formatDuration(summary.sRankTime)}</strong>
         </div>
         <div>
+          <span>Ultimates</span>
+          <strong>${summary.ultimatesTriggered || 0}</strong>
+          <em>First ${firstUltimate}</em>
+        </div>
+        <div>
+          <span>Powerups</span>
+          <strong>${summary.powerupsCollected || 0}</strong>
+          <em>${summary.energyCollected || 0} energy</em>
+        </div>
+        <div>
+          <span>Magnet</span>
+          <strong>${formatDuration(summary.magnetUseTime || 0)}</strong>
+          <em>${formatDuration(summary.magnetDangerTime || 0)} danger</em>
+        </div>
+        <div>
           <span>Last Run</span>
           <strong>${previousSummary ? previousSummary.score.toLocaleString() : "-"}</strong>
           <em>${lastStatus}</em>
@@ -4735,6 +5146,8 @@ function runSummaryHtml(summary, previousSummary, previousBest) {
           <em>${bestStatus}</em>
         </div>
       </div>
+      <div class="tips-title">Next Run</div>
+      <ul class="run-tips">${tips}</ul>
       <div class="kills-title">Kills</div>
       <div class="kill-grid">${killRows}</div>
     </section>`;
@@ -4952,8 +5365,7 @@ function updateTutorial(dt) {
     }
     if (combatTutorialPowerupCollected) {
       tutorialPhase = "none";
-      breatherTimer = Math.max(breatherTimer || 0, 0.8);
-      spawnTimer = 0.8;
+      startOpeningSequence();
       addFloatingText(player.x, player.y - 58, "RUN START", "#6df6d5");
       addRingBurst(player.x, player.y, "#6df6d5", 26, 10, 300, 3);
     }
@@ -5012,6 +5424,25 @@ function updateBossDefeatSequence(dt) {
     addParticles(x, y, Math.random() < 0.5 ? "#ffd166" : "#edf7f5", 18, 320);
   }
   if (bossDefeatSequence.timer <= 0) {
+    if (bossDefeatSequence.outcome === "continue") {
+      firstBossDefeated = true;
+      nextBossWave = SECOND_BOSS_WAVE;
+      gameplayElapsed = Math.max(gameplayElapsed, FIRST_BOSS_WAVE * 28);
+      wave = Math.max(wave, FIRST_BOSS_WAVE + 1);
+      announcedWave = wave;
+      bossDefeatSequence = null;
+      state = "playing";
+      audio.setMusicMode("normal");
+      spawnTimer = 1.2;
+      formationTimer = 2.4;
+      minefieldTimer = 3.2;
+      breatherTimer = 1.6;
+      pendingThreat = null;
+      addFloatingText(WIDTH / 2, 86, "WAVE 11: FRACTURE SWARM", "#ff5b74");
+      addRingBurst(player.x, player.y, "#6df6d5", 24, 8, 260, 3);
+      return;
+    }
+    secondBossDefeated = true;
     endGame("victory");
   }
 }
@@ -5085,6 +5516,12 @@ function update(dt) {
   const worldDt = circleActive ? dt * 0.025 : dt;
   if (!circleActive && pointer.rightDown) {
     magnetHoldTime += dt;
+    if (!tutorialActive && runStats) {
+      runStats.magnetUseTime = (runStats.magnetUseTime || 0) + dt;
+      if (magnetHoldTime > 0.85) {
+        runStats.magnetDangerTime = (runStats.magnetDangerTime || 0) + dt;
+      }
+    }
     audio.magnet(!magnetWasDown, magnetRamp());
     magnetWasDown = true;
   } else {
@@ -5093,6 +5530,7 @@ function update(dt) {
     magnetHoldTime = 0;
   }
   updateTutorial(dt);
+  updateOpeningSequence(dt);
 
   updatePlayer(dt);
   if (!tutorialActive || isCombatTutorialActive()) {
@@ -6176,6 +6614,10 @@ function drawBossArmorPlates() {
 
 function drawBoss() {
   if (!boss) return;
+  if (boss.type === "eclipse") {
+    drawEclipseBoss();
+    return;
+  }
   ctx.save();
   ctx.translate(boss.x, boss.y);
   const flash = boss.flash > 0;
@@ -6402,6 +6844,150 @@ function drawBoss() {
   ctx.font = "800 13px system-ui, sans-serif";
   ctx.textAlign = "center";
   ctx.fillText(bossCannonsAlive() ? "CANNON WARDEN - BREAK CANNONS" : "CANNON WARDEN - TORSO EXPOSED", WIDTH / 2, bossHudY + 7);
+  ctx.restore();
+}
+
+function drawEclipseBoss() {
+  ctx.save();
+  ctx.translate(boss.x, boss.y);
+  const flash = boss.flash > 0;
+  const pulse = 0.5 + Math.sin(elapsed * 5.2) * 0.5;
+  const coreOpen = !bossCannonsAlive();
+
+  ctx.save();
+  ctx.rotate(boss.rotation || 0);
+  ctx.shadowColor = flash ? "#edf7f5" : "#8a7dff";
+  ctx.shadowBlur = flash ? 24 : 14 + pulse * 8;
+  ctx.strokeStyle = flash ? "#edf7f5" : "#8a7dff";
+  ctx.lineWidth = 18;
+  ctx.beginPath();
+  ctx.arc(0, 0, 68, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.lineWidth = 7;
+  ctx.strokeStyle = "#263040";
+  ctx.beginPath();
+  ctx.arc(0, 0, 95, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.strokeStyle = "#6df6d5";
+  ctx.lineWidth = 2;
+  for (let i = 0; i < 12; i += 1) {
+    const a = (i / 12) * Math.PI * 2;
+    ctx.beginPath();
+    ctx.moveTo(Math.cos(a) * 55, Math.sin(a) * 55);
+    ctx.lineTo(Math.cos(a) * 100, Math.sin(a) * 100);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  const coreGradient = ctx.createRadialGradient(0, 6, 4, 0, 6, 44);
+  coreGradient.addColorStop(0, coreOpen ? "#edf7f5" : "#111820");
+  coreGradient.addColorStop(0.42, coreOpen ? "#6df6d5" : "#5d3e8f");
+  coreGradient.addColorStop(1, coreOpen ? "#1a5e65" : "#160f28");
+  ctx.fillStyle = coreGradient;
+  ctx.strokeStyle = coreOpen ? "#6df6d5" : "#ffd166";
+  ctx.lineWidth = 3;
+  ctx.shadowColor = coreOpen ? "#6df6d5" : "#8a7dff";
+  ctx.shadowBlur = coreOpen ? 22 + pulse * 12 : 12;
+  ctx.beginPath();
+  ctx.arc(0, 6, coreOpen ? 38 + pulse * 3 : 30, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+
+  if (!coreOpen) {
+    ctx.fillStyle = "#ffd166";
+    ctx.font = "800 9px system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.globalAlpha = 0.78;
+    ctx.fillText("CORE SEALED", 0, 10);
+    ctx.globalAlpha = 1;
+  }
+
+  boss.parts.forEach((part) => {
+    const pos = eclipsePartWorld(part);
+    ctx.save();
+    ctx.translate(pos.x - boss.x, pos.y - boss.y);
+    const angle = (boss.rotation || 0) + part.angle + Math.PI / 2;
+    ctx.rotate(angle);
+    ctx.globalAlpha = part.alive ? 1 : 0.22;
+    ctx.shadowColor = part.flash > 0 ? "#edf7f5" : "#ffd166";
+    ctx.shadowBlur = part.alive ? 12 + (part.flash || 0) * 18 : 0;
+    ctx.fillStyle = part.flash > 0 ? "#edf7f5" : "#ffd166";
+    ctx.strokeStyle = "#071014";
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(0, -25);
+    ctx.lineTo(28, -8);
+    ctx.lineTo(20, 20);
+    ctx.lineTo(-20, 20);
+    ctx.lineTo(-28, -8);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = "#8a7dff";
+    ctx.fillRect(-14, -5, 28, 7);
+    ctx.restore();
+  });
+
+  if ((boss.gravityWell || 0) > 0) {
+    const alpha = clamp((boss.gravityWell || 0) / 3.1, 0, 1);
+    ctx.globalAlpha = 0.18 + alpha * 0.24;
+    ctx.strokeStyle = "#8a7dff";
+    ctx.shadowColor = "#8a7dff";
+    ctx.shadowBlur = 24;
+    ctx.lineWidth = 3;
+    for (let i = 0; i < 3; i += 1) {
+      ctx.beginPath();
+      ctx.arc(0, 0, 115 + i * 24 - ((elapsed * 42) % 24), 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+    ctx.shadowBlur = 0;
+  }
+  ctx.restore();
+
+  (boss.beams || []).forEach((beam) => {
+    const warning = beam.warning > 0;
+    const warningMax = beam.warningMax || 1.12;
+    const alpha = warning ? clamp(1 - beam.warning / warningMax, 0.18, 0.76) : clamp(beam.life / beam.maxLife, 0.2, 0.92);
+    ctx.save();
+    ctx.translate(beam.x, beam.y);
+    ctx.rotate(beam.angle);
+    ctx.globalCompositeOperation = "lighter";
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = warning ? "#ffd166" : "#ff5b74";
+    ctx.shadowColor = ctx.strokeStyle;
+    ctx.shadowBlur = warning ? 12 + alpha * 12 : 26;
+    ctx.lineWidth = warning ? 2.5 + alpha * 2 : beam.width;
+    if (warning) ctx.setLineDash([18, 10]);
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(HEIGHT + 160, 0);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    if (!warning) {
+      ctx.strokeStyle = "#ffd166";
+      ctx.lineWidth = Math.max(3, beam.width * 0.24);
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.lineTo(HEIGHT + 160, 0);
+      ctx.stroke();
+    }
+    ctx.restore();
+  });
+
+  boss.parts.forEach((part) => {
+    if (!part.alive) return;
+    const pos = eclipsePartWorld(part);
+    drawBar(pos.x - 24, pos.y + part.r + 9, 48, 4, part.hp, part.maxHp, "#ffd166");
+  });
+  const bossHudY = 54;
+  drawBar(WIDTH / 2 - 150, bossHudY + 12, 300, 9, boss.hp, boss.maxHp, coreOpen ? "#8a7dff" : "#6df6d5");
+  ctx.save();
+  ctx.fillStyle = "#edf7f5";
+  ctx.font = "800 13px system-ui, sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText(coreOpen ? "ECLIPSE ARRAY - CORE EXPOSED" : "ECLIPSE ARRAY - BREAK ORBIT PLATES", WIDTH / 2, bossHudY + 7);
   ctx.restore();
 }
 
@@ -7827,6 +8413,11 @@ window.addEventListener("keydown", (event) => {
   }
   if (key === "b" && !boss) {
     spawnFirstBoss();
+  }
+  if (key === "n" && !boss) {
+    spawnSecondBoss();
+    event.preventDefault();
+    return;
   }
   if (key === "m") {
     spawnDebugMothershipPack();

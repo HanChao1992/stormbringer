@@ -300,7 +300,8 @@ canvas {
 
 .summary-score span,
 .summary-metrics span,
-.kills-title {
+.kills-title,
+.tips-title {
   display: block;
   color: #91a4a0;
   font-size: 0.76rem;
@@ -347,8 +348,28 @@ canvas {
   font-weight: 800;
 }
 
-.kills-title {
+.kills-title,
+.tips-title {
   margin-top: 2px;
+}
+
+.run-tips {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.run-tips li {
+  padding: 10px 12px;
+  border: 1px solid rgba(109, 246, 213, 0.16);
+  border-radius: 6px;
+  color: #d4e5e1;
+  background: rgba(109, 246, 213, 0.055);
+  font-size: 0.9rem;
+  font-weight: 760;
+  line-height: 1.35;
 }
 
 .kill-grid {
